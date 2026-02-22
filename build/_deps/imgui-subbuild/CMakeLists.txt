@@ -16,20 +16,12 @@ unset(ENV{CMAKE_TOOLCHAIN_FILE})
 project(imgui-populate NONE)
 
 
-# Pass through things we've already detected in the main project to avoid
-# paying the cost of redetecting them again in ExternalProject_Add()
-set(GIT_EXECUTABLE [==[/usr/bin/git]==])
-set(GIT_VERSION_STRING [==[2.43.0]==])
-set_property(GLOBAL PROPERTY _CMAKE_FindGit_GIT_EXECUTABLE_VERSION
-  [==[/usr/bin/git;2.43.0]==]
-)
-
 
 include(ExternalProject)
 ExternalProject_Add(imgui-populate
-                     "UPDATE_DISCONNECTED" "False" "GIT_REPOSITORY" "https://github.com/ocornut/imgui.git" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "GIT_TAG" "docking"
-                    SOURCE_DIR          "/home/rouger/github/glora2.0/build/_deps/imgui-src"
-                    BINARY_DIR          "/home/rouger/github/glora2.0/build/_deps/imgui-build"
+                     "UPDATE_DISCONNECTED" "False" "DOWNLOAD_EXTRACT_TIMESTAMP" "FALSE" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "URL" "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.6-docking.tar.gz"
+                    SOURCE_DIR          "/home/rouger/github/glora2.0-1/build/_deps/imgui-src"
+                    BINARY_DIR          "/home/rouger/github/glora2.0-1/build/_deps/imgui-build"
                     CONFIGURE_COMMAND   ""
                     BUILD_COMMAND       ""
                     INSTALL_COMMAND     ""

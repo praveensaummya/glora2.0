@@ -1,4 +1,4 @@
-# Install script for directory: /home/rouger/github/glora2.0/build/_deps/json-src
+# Install script for directory: /home/rouger/github/glora2.0-1/build/_deps/json-src
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)

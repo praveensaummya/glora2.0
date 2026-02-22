@@ -16,20 +16,12 @@ unset(ENV{CMAKE_TOOLCHAIN_FILE})
 project(ixwebsocket-populate NONE)
 
 
-# Pass through things we've already detected in the main project to avoid
-# paying the cost of redetecting them again in ExternalProject_Add()
-set(GIT_EXECUTABLE [==[/usr/bin/git]==])
-set(GIT_VERSION_STRING [==[2.43.0]==])
-set_property(GLOBAL PROPERTY _CMAKE_FindGit_GIT_EXECUTABLE_VERSION
-  [==[/usr/bin/git;2.43.0]==]
-)
-
 
 include(ExternalProject)
 ExternalProject_Add(ixwebsocket-populate
-                     "UPDATE_DISCONNECTED" "False" "GIT_REPOSITORY" "https://github.com/machinezone/IXWebSocket.git" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "GIT_TAG" "master"
-                    SOURCE_DIR          "/home/rouger/github/glora2.0/build/_deps/ixwebsocket-src"
-                    BINARY_DIR          "/home/rouger/github/glora2.0/build/_deps/ixwebsocket-build"
+                     "UPDATE_DISCONNECTED" "False" "DOWNLOAD_EXTRACT_TIMESTAMP" "FALSE" "EXTERNALPROJECT_INTERNAL_ARGUMENT_SEPARATOR" "URL" "https://github.com/machinezone/IXWebSocket/archive/refs/tags/v11.4.6.tar.gz"
+                    SOURCE_DIR          "/home/rouger/github/glora2.0-1/build/_deps/ixwebsocket-src"
+                    BINARY_DIR          "/home/rouger/github/glora2.0-1/build/_deps/ixwebsocket-build"
                     CONFIGURE_COMMAND   ""
                     BUILD_COMMAND       ""
                     INSTALL_COMMAND     ""

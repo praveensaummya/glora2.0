@@ -4,19 +4,19 @@
 cmake_minimum_required(VERSION 3.5)
 
 file(MAKE_DIRECTORY
-  "/home/rouger/github/glora2.0/build/_deps/imgui-src"
-  "/home/rouger/github/glora2.0/build/_deps/imgui-build"
-  "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix"
-  "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix/tmp"
-  "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp"
-  "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix/src"
-  "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-src"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-build"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix/tmp"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix/src"
+  "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp"
 )
 
 set(configSubDirs )
 foreach(subDir IN LISTS configSubDirs)
-    file(MAKE_DIRECTORY "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp/${subDir}")
+    file(MAKE_DIRECTORY "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp/${subDir}")
 endforeach()
 if(cfgdir)
-  file(MAKE_DIRECTORY "/home/rouger/github/glora2.0/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp${cfgdir}") # cfgdir has leading slash
+  file(MAKE_DIRECTORY "/home/rouger/github/glora2.0-1/build/_deps/imgui-subbuild/imgui-populate-prefix/src/imgui-populate-stamp${cfgdir}") # cfgdir has leading slash
 endif()

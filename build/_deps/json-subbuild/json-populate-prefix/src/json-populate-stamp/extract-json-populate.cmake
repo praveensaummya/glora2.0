@@ -5,8 +5,8 @@ cmake_minimum_required(VERSION 3.5)
 
 # Make file names absolute:
 #
-get_filename_component(filename "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/src/json.tar.xz" ABSOLUTE)
-get_filename_component(directory "/home/rouger/github/glora2.0/build/_deps/json-src" ABSOLUTE)
+get_filename_component(filename "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/src/json.tar.xz" ABSOLUTE)
+get_filename_component(directory "/home/rouger/github/glora2.0-1/build/_deps/json-src" ABSOLUTE)
 
 message(STATUS "extracting...
      src='${filename}'
@@ -29,7 +29,7 @@ file(MAKE_DIRECTORY "${ut_dir}")
 # Extract it:
 #
 message(STATUS "extracting... [tar xfz]")
-execute_process(COMMAND ${CMAKE_COMMAND} -E tar xfz ${filename} 
+execute_process(COMMAND ${CMAKE_COMMAND} -E tar xfz ${filename} --touch
   WORKING_DIRECTORY ${ut_dir}
   RESULT_VARIABLE rv
 )

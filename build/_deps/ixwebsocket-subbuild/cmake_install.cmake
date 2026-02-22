@@ -1,4 +1,4 @@
-# Install script for directory: /home/rouger/github/glora2.0/build/_deps/ixwebsocket-subbuild
+# Install script for directory: /home/rouger/github/glora2.0-1/build/_deps/ixwebsocket-subbuild
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -45,5 +45,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/home/rouger/github/glora2.0/build/_deps/ixwebsocket-subbuild/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/home/rouger/github/glora2.0-1/build/_deps/ixwebsocket-subbuild/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

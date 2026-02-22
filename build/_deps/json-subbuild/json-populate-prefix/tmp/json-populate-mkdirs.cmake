@@ -4,19 +4,19 @@
 cmake_minimum_required(VERSION 3.5)
 
 file(MAKE_DIRECTORY
-  "/home/rouger/github/glora2.0/build/_deps/json-src"
-  "/home/rouger/github/glora2.0/build/_deps/json-build"
-  "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix"
-  "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/tmp"
-  "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp"
-  "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/src"
-  "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-src"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-build"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/tmp"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/src"
+  "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp"
 )
 
 set(configSubDirs )
 foreach(subDir IN LISTS configSubDirs)
-    file(MAKE_DIRECTORY "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/${subDir}")
+    file(MAKE_DIRECTORY "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp/${subDir}")
 endforeach()
 if(cfgdir)
-  file(MAKE_DIRECTORY "/home/rouger/github/glora2.0/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp${cfgdir}") # cfgdir has leading slash
+  file(MAKE_DIRECTORY "/home/rouger/github/glora2.0-1/build/_deps/json-subbuild/json-populate-prefix/src/json-populate-stamp${cfgdir}") # cfgdir has leading slash
 endif()

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "../core/DataModels.h"
+#include "../settings/Settings.h"
 #include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 namespace glora {
 namespace network {
@@ -14,20 +16,29 @@ using json = nlohmann::json;
 // Callback signatures
 using OnCandleCallback = std::function<void(const core::Candle &)>;
 using OnTickCallback = std::function<void(const core::Tick &)>;
+using OnTicksCallback = std::function<void(const std::vector<core::Tick> &)>;
 
 class BinanceClient {
 public:
   BinanceClient();
   ~BinanceClient();
 
-  // Initialize connection pools, DNS resolution, etc
-  bool initialize();
+  // Initialize with user API configuration
+  bool initialize(const settings::ApiConfig* config = nullptr);
+
+  // Update API configuration
+  void setApiConfig(const settings::ApiConfig& config);
 
   // --- REST API ---
   // Fetch historical aggregated trades for footprint generation
   void fetchHistoricalAggTrades(
       const std::string &symbol, uint64_t startTime, uint64_t endTime,
       std::function<void(const std::vector<core::Tick> &)> onDataCallback);
+
+  // Fetch klines (candlesticks)
+  void fetchKlines(const std::string& symbol, const std::string& interval,
+                    uint64_t startTime, uint64_t endTime,
+                    std::function<void(const std::vector<core::Candle>&)> onDataCallback);
 
   // --- WebSockets ---
   // Subscribe to real-time aggTrade stream
@@ -39,10 +50,14 @@ public:
   // Shutdown cleanly
   void shutdown();
 
+  // Check if using user API
+  bool hasApiCredentials() const { return hasApiConfig_; }
+
 private:
   // Internal state (Boost Asio contexts, Websocket streams, etc) would go here
   struct Impl;
   std::unique_ptr<Impl> pImpl;
+  bool hasApiConfig_ = false;
 };
 
 } // namespace network

@@ -1,7 +1,21 @@
 #include "BinanceClient.h"
+#include "../settings/Settings.h"
 #include <iostream>
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXWebSocket.h>
+#include <sstream>
+#include <openssl/hmac.h>
+#include <openssl/sha.h>
+#include <openssl/evp.h>
+#include <iomanip>
+#include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 namespace glora {
 namespace network {
@@ -10,23 +24,266 @@ struct BinanceClient::Impl {
   ix::WebSocket webSocket;
   std::string activeSymbol;
   OnTickCallback onTick;
+  
+  // User API configuration
+  std::string apiKey;
+  std::string apiSecret;
+  bool useTestnet = false;
+  
+  std::string getBaseUrl() const {
+    return useTestnet ? "testnet.binance.vision" : "api.binance.com";
+  }
+  
+  std::string getWsUrl() const {
+    return useTestnet ? "wss://testnet.binance.vision/ws" : "wss://stream.binance.com:9443/ws";
+  }
+  
+  // Generate HMAC SHA256 signature for API requests
+  std::string generateSignature(const std::string& queryString) const {
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    unsigned int digestLen = SHA256_DIGEST_LENGTH;
+    
+    HMAC(EVP_sha256(), 
+         apiSecret.c_str(), apiSecret.length(),
+         (const unsigned char*)queryString.c_str(), queryString.length(),
+         digest, &digestLen);
+    
+    std::stringstream ss;
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+      ss << std::hex << std::setw(2) << std::setfill('0') << (int)digest[i];
+    }
+    return ss.str();
+  }
+  
+  // Simple HTTPS GET using OpenSSL
+  std::string httpsGet(const std::string& host, const std::string& path, const std::string& apiKeyHeader = "") {
+    std::string response;
+    
+    SSL_library_init();
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return response;
+    
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+      SSL_CTX_free(ctx);
+      return response;
+    }
+    
+    struct hostent* server = gethostbyname(host.c_str());
+    if (!server) {
+      close(sock);
+      SSL_CTX_free(ctx);
+      return response;
+    }
+    
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    serv_addr.sin_port = htons(443);
+    
+    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+      close(sock);
+      SSL_CTX_free(ctx);
+      return response;
+    }
+    
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, sock);
+    
+    if (SSL_connect(ssl) != 1) {
+      SSL_free(ssl);
+      close(sock);
+      SSL_CTX_free(ctx);
+      return response;
+    }
+    
+    // Build HTTP request
+    std::stringstream request;
+    request << "GET " << path << " HTTP/1.1\r\n";
+    request << "Host: " << host << "\r\n";
+    request << "Accept: application/json\r\n";
+    if (!apiKeyHeader.empty()) {
+      request << "X-MBX-APIKEY: " << apiKeyHeader << "\r\n";
+    }
+    request << "Connection: close\r\n";
+    request << "\r\n";
+    
+    std::string requestStr = request.str();
+    SSL_write(ssl, requestStr.c_str(), requestStr.length());
+    
+    // Read response
+    char buffer[4096];
+    int bytesRead;
+    while ((bytesRead = SSL_read(ssl, buffer, sizeof(buffer) - 1)) > 0) {
+      buffer[bytesRead] = 0;
+      response += buffer;
+    }
+    
+    SSL_free(ssl);
+    close(sock);
+    SSL_CTX_free(ctx);
+    
+    // Extract body from HTTP response
+    size_t bodyStart = response.find("\r\n\r\n");
+    if (bodyStart != std::string::npos) {
+      return response.substr(bodyStart + 4);
+    }
+    return response;
+  }
 };
 
 BinanceClient::BinanceClient() : pImpl(std::make_unique<Impl>()) {}
 
 BinanceClient::~BinanceClient() { shutdown(); }
 
-bool BinanceClient::initialize() {
+bool BinanceClient::initialize(const settings::ApiConfig* config) {
   ix::initNetSystem();
+  
+  if (config && config->isValid()) {
+    pImpl->apiKey = config->apiKey;
+    pImpl->apiSecret = config->apiSecret;
+    pImpl->useTestnet = config->useTestnet;
+    hasApiConfig_ = true;
+    std::cout << "Binance Client initialized with API credentials (Testnet: " 
+              << (pImpl->useTestnet ? "yes" : "no") << ")" << std::endl;
+  } else {
+    std::cout << "Binance Client initialized (public data only)" << std::endl;
+  }
   return true;
+}
+
+void BinanceClient::setApiConfig(const settings::ApiConfig& config) {
+  if (config.isValid()) {
+    pImpl->apiKey = config.apiKey;
+    pImpl->apiSecret = config.apiSecret;
+    pImpl->useTestnet = config.useTestnet;
+    hasApiConfig_ = true;
+    std::cout << "API credentials updated (Testnet: " << (pImpl->useTestnet ? "yes" : "no") << ")" << std::endl;
+  }
 }
 
 void BinanceClient::fetchHistoricalAggTrades(
     const std::string &symbol, uint64_t startTime, uint64_t endTime,
     std::function<void(const std::vector<core::Tick> &)> onDataCallback) {
-  // TODO: Implement HTTP GET request for historical data
-  // For now, we'll focus on the Websocket part.
-  std::cout << "fetchHistoricalAggTrades called for " << symbol << std::endl;
+  
+  std::vector<core::Tick> allTicks;
+  uint64_t currentStart = startTime;
+  const uint64_t maxLimit = 1000; // Binance API limit per request
+  const uint64_t chunkSize = maxLimit * 1000; // ~1 second worth of trades
+  
+  while (currentStart < endTime) {
+    uint64_t currentEnd = std::min(currentStart + chunkSize, endTime);
+    
+    // Build query string
+    std::stringstream ss;
+    ss << "/api/v3/aggTrade?"
+       << "symbol=" << symbol 
+       << "&startTime=" << currentStart 
+       << "&limit=" << maxLimit;
+    std::string queryStr = ss.str();
+    
+    std::string path = queryStr;
+    
+    // Add signature if we have API credentials
+    if (hasApiConfig_) {
+      std::string signature = pImpl->generateSignature(queryStr);
+      path = queryStr + "&signature=" + signature;
+    }
+    
+    // Make request using HTTPS
+    std::string apiKeyHeader = hasApiConfig_ ? pImpl->apiKey : "";
+    std::string response = pImpl->httpsGet(pImpl->getBaseUrl(), path, apiKeyHeader);
+    
+    if (!response.empty()) {
+      try {
+        auto j = json::parse(response);
+        
+        if (j.is_array()) {
+          for (const auto& trade : j) {
+            core::Tick tick;
+            tick.timestamp_ms = trade["T"].get<uint64_t>();
+            tick.price = std::stod(trade["p"].get<std::string>());
+            tick.quantity = std::stod(trade["q"].get<std::string>());
+            tick.is_buyer_maker = trade["m"].get<bool>();
+            allTicks.push_back(tick);
+          }
+          
+          std::cout << "Fetched " << j.size() << " trades from " 
+                    << currentStart << " to " << currentEnd << std::endl;
+        }
+        
+      } catch (const std::exception& e) {
+        std::cerr << "Error parsing historical trades: " << e.what() << std::endl;
+      }
+    } else {
+      std::cerr << "Failed to fetch historical trades (empty response)" << std::endl;
+    }
+    
+    currentStart = currentEnd + 1;
+  }
+  
+  if (onDataCallback) {
+    onDataCallback(allTicks);
+  }
+}
+
+void BinanceClient::fetchKlines(const std::string& symbol, const std::string& interval,
+                                 uint64_t startTime, uint64_t endTime,
+                                 std::function<void(const std::vector<core::Candle>&)> onDataCallback) {
+  
+  std::vector<core::Candle> candles;
+  
+  // Build query string
+  std::stringstream ss;
+  ss << "/api/v3/klines?"
+     << "symbol=" << symbol 
+     << "&interval=" << interval
+     << "&startTime=" << startTime
+     << "&limit=1000";
+  std::string queryStr = ss.str();
+  
+  std::string path = queryStr;
+  
+  if (hasApiConfig_) {
+    std::string signature = pImpl->generateSignature(queryStr);
+    path = queryStr + "&signature=" + signature;
+  }
+  
+  // Make request using HTTPS
+  std::string apiKeyHeader = hasApiConfig_ ? pImpl->apiKey : "";
+  std::string response = pImpl->httpsGet(pImpl->getBaseUrl(), path, apiKeyHeader);
+  
+  if (!response.empty()) {
+    try {
+      auto j = json::parse(response);
+      
+      if (j.is_array()) {
+        for (const auto& kline : j) {
+          core::Candle candle;
+          candle.start_time_ms = kline[0].get<uint64_t>();
+          candle.end_time_ms = kline[6].get<uint64_t>();
+          candle.open = std::stod(kline[1].get<std::string>());
+          candle.high = std::stod(kline[2].get<std::string>());
+          candle.low = std::stod(kline[3].get<std::string>());
+          candle.close = std::stod(kline[4].get<std::string>());
+          candle.volume = std::stod(kline[5].get<std::string>());
+          candles.push_back(candle);
+        }
+        
+        std::cout << "Fetched " << candles.size() << " klines" << std::endl;
+      }
+      
+    } catch (const std::exception& e) {
+      std::cerr << "Error parsing klines: " << e.what() << std::endl;
+    }
+  } else {
+    std::cerr << "Failed to fetch klines (empty response)" << std::endl;
+  }
+  
+  if (onDataCallback) {
+    onDataCallback(candles);
+  }
 }
 
 void BinanceClient::subscribeAggTrades(const std::string &symbol,
@@ -41,8 +298,7 @@ void BinanceClient::subscribeAggTrades(const std::string &symbol,
   for (auto &c : lowerSymbol)
     c = std::tolower(c);
 
-  std::string url =
-      "wss://stream.binance.com:9443/ws/" + lowerSymbol + "@aggTrade";
+  std::string url = pImpl->getWsUrl() + "/" + lowerSymbol + "@aggTrade";
   pImpl->webSocket.setUrl(url);
 
   // Setup message handler
