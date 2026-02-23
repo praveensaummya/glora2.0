@@ -195,6 +195,12 @@ inline void Camera::setPriceRange(double minPrice, double maxPrice) {
 }
 
 inline std::pair<double, double> Camera::getPriceRange() const {
+  // Handle edge case when minPrice equals maxPrice to avoid downstream issues
+  if (minPrice_ == maxPrice_) {
+    // Return a small non-zero range centered on the price
+    double halfRange = std::max(1.0, std::abs(minPrice_) * 0.01);
+    return {minPrice_ - halfRange, maxPrice_ + halfRange};
+  }
   return {minPrice_, maxPrice_};
 }
 
@@ -323,8 +329,13 @@ Camera::chartToScreen(uint64_t time, double price, int width, int height) const 
   // Account for right margin
   double effectiveWidth = 1.0 - rightMarginPercent_;
   
-  double timeRatio = static_cast<double>(time - startTime_) / static_cast<double>(endTime_ - startTime_);
-  timeRatio = std::max(0.0, std::min(1.0, timeRatio)); // Clamp
+  // Add zero-check before dividing by time range to prevent division by zero
+  uint64_t timeRange = endTime_ - startTime_;
+  double timeRatio = 0.0;
+  if (timeRange > 0) {
+    timeRatio = static_cast<double>(time - startTime_) / static_cast<double>(timeRange);
+    timeRatio = std::max(0.0, std::min(1.0, timeRatio)); // Clamp
+  }
   
   double priceRatio = (price - minPrice_) / (maxPrice_ - minPrice_);
   priceRatio = std::max(0.0, std::min(1.0, priceRatio)); // Clamp

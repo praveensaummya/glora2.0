@@ -4,6 +4,9 @@
 #include <imgui.h>
 #include <iostream>
 #include <algorithm>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 
 namespace glora {
 namespace render {
@@ -59,11 +62,29 @@ void ChartRenderer::render(int width, int height, const Camera &camera) {
     drawList->AddLine(ImVec2(chartX, y), ImVec2(chartX + chartW, y),
                       IM_COL32(40, 40, 50, 255), 1.0f);
 
-    // Price label
+    // Price label (right side)
     char priceStr[32];
     snprintf(priceStr, sizeof(priceStr), "%.2f", price);
-    drawList->AddText(ImVec2(chartX + 5, y - 8), IM_COL32(150, 150, 150, 255),
+    drawList->AddText(ImVec2(chartX + chartW - 60, y - 8), IM_COL32(150, 150, 150, 255),
                       priceStr);
+  }
+
+  // Vertical grid lines (time axis)
+  auto [minTime, maxTime] = camera.getTimeRange();
+  int numTimeLines = 6;
+  for (int i = 0; i <= numTimeLines; i++) {
+    uint64_t time = minTime + (maxTime - minTime) * i / numTimeLines;
+    float x = chartX + (chartW * i / numTimeLines);
+    drawList->AddLine(ImVec2(x, chartY), ImVec2(x, chartY + chartAreaHeight),
+                      IM_COL32(40, 40, 50, 255), 1.0f);
+
+    // Time label
+    std::time_t timeSec = static_cast<std::time_t>(time / 1000);
+    std::tm* tm = std::localtime(&timeSec);
+    char timeStr[32];
+    strftime(timeStr, sizeof(timeStr), "%m/%d %H:%M", tm);
+    drawList->AddText(ImVec2(x - 35, chartY + chartAreaHeight + 5), IM_COL32(150, 150, 150, 255),
+                      timeStr);
   }
 
   // Draw chart based on type
@@ -79,8 +100,10 @@ void ChartRenderer::render(int width, int height, const Camera &camera) {
     break;
   }
 
-  // Draw volume chart at bottom
-  renderVolume(width, height, camera);
+  // Draw volume chart at bottom (only for candlestick charts or when explicitly requested)
+  if (chartType_ == ChartType::CANDLESTICK || chartType_ == ChartType::VOLUME) {
+    renderVolume(width, height, camera);
+  }
 }
 
 void ChartRenderer::renderCandlesticks(int width, int height,

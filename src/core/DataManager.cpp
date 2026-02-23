@@ -39,7 +39,7 @@ void DataManager::loadSymbolData(const std::string& symbol) {
   std::thread gapThread([this]() {
     detectAndFillGaps();
   });
-  gapThread.detach();
+  gapThread.join(); // Properly join the thread instead of detaching
 }
 
 void DataManager::loadFromDatabase() {
@@ -295,7 +295,7 @@ void DataManager::refreshData() {
   std::thread refreshThread([this]() {
     detectAndFillGaps();
   });
-  refreshThread.detach();
+  refreshThread.join(); // Properly join the thread instead of detaching
 }
 
 } // namespace core

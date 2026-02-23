@@ -2,6 +2,7 @@
 
 #include "Camera.h"
 #include "ChartLayer.h"
+#include "ChartData.h"
 #include <functional>
 #include <vector>
 #include <optional>
@@ -145,16 +146,40 @@ private:
   
   // Helper: find nearest price in data
   double findNearestPrice(double screenY, const Camera& camera, 
-                          const class ChartData& data) const;
+                          const class ChartData& data) const {
+    if (data.getAllCandles().empty()) return 0;
+    
+    // Convert screen Y to chart price
+    auto [time, price] = camera.screenToChart(0, screenY, 1, 1);
+    
+    // Use ChartData's findNearestPriceLevel
+    return data.findNearestPriceLevel(price, 0.01);
+  }
   
   // Helper: find nearest time in data  
   uint64_t findNearestTime(double screenX, const Camera& camera,
-                           const class ChartData& data) const;
+                           const class ChartData& data) const {
+    if (data.getAllCandles().empty()) return 0;
+    
+    // Convert screen X to chart time
+    auto [time, price] = camera.screenToChart(screenX, 0, 1, 1);
+    
+    // Use ChartData's findNearestTime
+    return data.findNearestTime(time);
+  }
   
   // Helper: find nearest OHLC value
   std::optional<double> findNearestOHLC(double screenX, double screenY,
                                          const Camera& camera,
-                                         const class ChartData& data) const;
+                                         const class ChartData& data) const {
+    if (data.getAllCandles().empty()) return std::nullopt;
+    
+    // Convert screen coordinates to chart coordinates
+    auto [time, price] = camera.screenToChart(screenX, screenY, 1, 1);
+    
+    // Use ChartData's findNearestOHLC
+    return data.findNearestOHLC(time, price);
+  }
 };
 
 inline ChartInteractionHandler::ChartInteractionHandler() {}

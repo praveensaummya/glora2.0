@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/DataModels.h"
+#include "ChartInteractionHandler.h"
 #include <memory>
 
 namespace glora {

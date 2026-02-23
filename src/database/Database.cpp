@@ -105,6 +105,9 @@ bool Database::insertTicks(const std::string& symbol, const std::vector<core::Ti
     VALUES (?, ?, ?, ?, ?)
   )";
   
+  // Validate SQLite handle before use
+  if (!db_) return false;
+  
   int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
   if (rc != SQLITE_OK) return false;
   
