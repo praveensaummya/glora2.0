@@ -16,9 +16,33 @@
 #include <unistd.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <map>
 
 namespace glora {
 namespace network {
+
+// Interval mapping from frontend to Binance API format
+static const std::map<std::string, std::string> INTERVAL_MAP = {
+  {"1s", "1s"},
+  {"1m", "1m"},
+  {"5m", "5m"},
+  {"15m", "15m"},
+  {"1h", "1h"},
+  {"4h", "4h"},
+  {"1D", "1d"},
+  {"1W", "1w"},
+  {"1M", "1M"}
+};
+
+// Convert frontend interval to Binance interval
+static std::string toBinanceInterval(const std::string& interval) {
+  auto it = INTERVAL_MAP.find(interval);
+  if (it != INTERVAL_MAP.end()) {
+    return it->second;
+  }
+  // Default to 1m if not found
+  return "1m";
+}
 
 struct BinanceClient::Impl {
   ix::WebSocket webSocket;
@@ -233,13 +257,16 @@ void BinanceClient::fetchKlines(const std::string& symbol, const std::string& in
                                  uint64_t startTime, uint64_t endTime,
                                  std::function<void(const std::vector<core::Candle>&)> onDataCallback) {
   
+  // Convert interval to Binance format
+  std::string binanceInterval = toBinanceInterval(interval);
+  
   std::vector<core::Candle> candles;
   
   // Build query string
   std::stringstream ss;
   ss << "/api/v3/klines?"
      << "symbol=" << symbol 
-     << "&interval=" << interval
+     << "&interval=" << binanceInterval
      << "&startTime=" << startTime
      << "&limit=1000";
   std::string queryStr = ss.str();
@@ -284,6 +311,64 @@ void BinanceClient::fetchKlines(const std::string& symbol, const std::string& in
   
   if (onDataCallback) {
     onDataCallback(candles);
+  }
+}
+
+void BinanceClient::fetchDepth(const std::string& symbol, int limit,
+                               std::function<void(const std::vector<std::pair<double, double>>& bids,
+                                                 const std::vector<std::pair<double, double>>& asks)> onDataCallback) {
+  std::vector<std::pair<double, double>> bids;
+  std::vector<std::pair<double, double>> asks;
+  
+  // Validate limit (must be between 5 and 1000)
+  int validLimit = std::max(5, std::min(limit, 1000));
+  
+  // Build query string
+  std::stringstream ss;
+  ss << "/api/v3/depth?"
+     << "symbol=" << symbol 
+     << "&limit=" << validLimit;
+  std::string queryStr = ss.str();
+  
+  std::string path = queryStr;
+  
+  // Make request using HTTPS (public endpoint, no auth needed)
+  std::string response = pImpl->httpsGet(pImpl->getBaseUrl(), path, "");
+  
+  if (!response.empty()) {
+    try {
+      auto j = json::parse(response);
+      
+      // Parse bids
+      if (j.contains("bids") && j["bids"].is_array()) {
+        for (const auto& bid : j["bids"]) {
+          double price = std::stod(bid[0].get<std::string>());
+          double quantity = std::stod(bid[1].get<std::string>());
+          bids.emplace_back(price, quantity);
+        }
+      }
+      
+      // Parse asks
+      if (j.contains("asks") && j["asks"].is_array()) {
+        for (const auto& ask : j["asks"]) {
+          double price = std::stod(ask[0].get<std::string>());
+          double quantity = std::stod(ask[1].get<std::string>());
+          asks.emplace_back(price, quantity);
+        }
+      }
+      
+      std::cout << "Fetched depth: " << bids.size() << " bids, " 
+                << asks.size() << " asks" << std::endl;
+      
+    } catch (const std::exception& e) {
+      std::cerr << "Error parsing depth data: " << e.what() << std::endl;
+    }
+  } else {
+    std::cerr << "Failed to fetch depth (empty response)" << std::endl;
+  }
+  
+  if (onDataCallback) {
+    onDataCallback(bids, asks);
   }
 }
 

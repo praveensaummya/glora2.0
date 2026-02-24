@@ -45,8 +45,38 @@ find_package(OpenGL REQUIRED)
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
+# Find OpenSSL
+find_package(OpenSSL REQUIRED)
+
 # Find SQLite (required for local storage)
 find_package(SQLite3 REQUIRED)
+
+# WebView support - Platform specific
+# Use CEF on Linux/macOS, WebView2 on Windows
+if(WIN32)
+  # Try to find WebView2 (Windows)
+  find_package(WebView2 QUIET)
+  if(WebView2_FOUND)
+    set(USE_WEBVIEW2 ON)
+    message(STATUS "WebView2 found - using for Windows UI")
+  else()
+    set(USE_WEBVIEW2 OFF)
+    message(STATUS "WebView2 not found - will use CEF as fallback")
+  endif()
+else()
+  # Use CEF on non-Windows platforms
+  set(USE_WEBVIEW2 OFF)
+  set(USE_CEF ON)
+  message(STATUS "Using CEF for cross-platform WebView")
+endif()
+
+# Find or build CEF (if enabled)
+if(USE_CEF AND NOT WIN32)
+  # CEF will be bundled or system-installed
+  # For now, we'll use a simple WebView approach
+  # Full CEF integration would require cef_build or pre-built binaries
+  message(STATUS "CEF support enabled (requires system CEF or bundled binaries)")
+endif()
 
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/src)
@@ -76,8 +106,11 @@ set(IMGUI_SOURCES
 add_executable(GloraChart
     src/main.cpp
     src/network/BinanceClient.cpp
+    src/network/WebSocketServer.cpp
+    src/network/ApiHandler.cpp
     src/render/MainWindow.cpp
     src/render/ChartRenderer.cpp
+    src/render/WebViewManager.cpp
     src/settings/SettingsManager.cpp
     src/database/Database.cpp
     src/core/DataManager.cpp
@@ -100,3 +133,27 @@ target_link_libraries(GloraChart PRIVATE
     OpenSSL::Crypto
     SQLite::SQLite3
 )
+
+# Platform-specific WebView settings
+if(USE_WEBVIEW2)
+  target_compile_definitions(GloraChart PRIVATE USE_WEBVIEW2)
+  target_link_libraries(GloraChart PRIVATE "WebView2Loader.dll.lib")
+  message(STATUS "Added WebView2 linkage for Windows")
+else()
+  target_compile_definitions(GloraChart PRIVATE USE_CEF)
+  message(STATUS "Using CEF for WebView (platform-independent)")
+endif()
+
+# Configure web resources path
+set(WEB_RESOURCES_DIR "${CMAKE_SOURCE_DIR}/web/my-react-app/dist")
+if(EXISTS ${WEB_RESOURCES_DIR})
+  message(STATUS "Web resources found at: ${WEB_RESOURCES_DIR}")
+  # Copy web resources to build directory
+  add_custom_command(TARGET GloraChart POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${WEB_RESOURCES_DIR}
+    $<TARGET_FILE_DIR:GloraChart>/web
+  )
+else()
+  message(WARNING "Web resources directory not found at: ${WEB_RESOURCES_DIR}")
+endif()

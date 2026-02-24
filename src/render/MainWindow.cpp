@@ -2,12 +2,16 @@
 #include "ChartRenderer.h"
 #include "Camera.h"
 #include "ChartData.h"
+#include "WebViewManager.h"
+#include "../network/WebSocketServer.h"
 #include "../core/ChartDataManager.h"
+#include "../network/BinanceClient.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <backends/imgui_impl_sdl2.h>
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -15,6 +19,8 @@
 #include <iomanip>
 #include <sstream>
 #include <limits>
+#include <filesystem>
+#include <chrono>
 
 namespace glora {
 namespace render {
@@ -34,12 +40,35 @@ struct MainWindow::Impl {
   std::shared_ptr<ChartInteractionHandler> interactionHandler;
   ChartData chartData;  // For interaction handler
 
+  // WebView component
+  std::shared_ptr<WebViewManager> webViewManager;
+  std::shared_ptr<network::WebSocketServer> wsServer;
+  bool useWebView = false;  // Toggle between ImGui and WebView
+  
+  // Binance client for real-time data
+  std::shared_ptr<network::BinanceClient> binanceClient;
+  std::string currentTradingSymbol = "BTCUSDT";
+  std::string currentInterval = "1m";
+  bool isSubscribed = false;
+
   // Mouse state
   bool isDragging = false;
+  bool isDraggingTimeScale = false;
+  bool isDraggingPriceScale = false;
   double lastMouseX = 0;
   double lastMouseY = 0;
   double mouseWheelAccum = 0;
   bool crosshairEnabled = true;
+
+  // Axis interaction areas (in pixels from edge)
+  const double timeScaleHeight = 30.0;  // Bottom time scale area
+  const double priceScaleWidth = 70.0;   // Right price scale area
+  
+  // Current chart area (updated each frame)
+  double chartAreaX = 0;
+  double chartAreaY = 0;
+  double chartAreaWidth = 800;
+  double chartAreaHeight = 600;
 
   // Hover state for tooltip
   bool showTooltip = false;
@@ -70,9 +99,30 @@ MainWindow::MainWindow(int width, int height, const std::string &title)
   pImpl->chartRenderer = std::make_shared<ChartRenderer>();
   pImpl->camera = std::make_shared<Camera>();
   pImpl->interactionHandler = std::make_shared<ChartInteractionHandler>();
+  
+  // Initialize WebViewManager (disabled by default for now)
+  pImpl->webViewManager = std::make_shared<WebViewManager>();
+  
+  // Initialize WebSocket server for frontend communication
+  pImpl->wsServer = std::make_shared<network::WebSocketServer>(8080);
+  pImpl->wsServer->start();
+  
+  // Initialize Binance client
+  pImpl->binanceClient = std::make_shared<network::BinanceClient>();
+  pImpl->binanceClient->initialize();
 }
 
 MainWindow::~MainWindow() {
+  // Shutdown WebView if initialized
+  if (pImpl->webViewManager) {
+    pImpl->webViewManager->shutdown();
+  }
+  
+  // Shutdown WebSocket server
+  if (pImpl->wsServer) {
+    pImpl->wsServer->stop();
+  }
+  
   if (pImpl->gl_context) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
@@ -156,6 +206,44 @@ bool MainWindow::initialize() {
   pImpl->interactionHandler->registerForSync(pImpl->currentSymbol);
   pImpl->interactionHandler->setSnapMode(SnapMode::ALL);
 
+  // Initialize WebView (optional - can be enabled via environment variable or config)
+  // Currently disabled by default - enable with USE_WEBVIEW env var
+  const char* useWebViewEnv = std::getenv("USE_WEBVIEW");
+  if (useWebViewEnv && std::string(useWebViewEnv) == "1") {
+    pImpl->useWebView = true;
+    
+    WebViewManager::Config webConfig;
+    webConfig.width = pImpl->width;
+    webConfig.height = pImpl->height;
+    webConfig.devToolsEnabled = true;
+    
+    // Get the executable path to locate web resources
+    std::filesystem::path execPath = std::filesystem::current_path();
+    std::filesystem::path webPath = execPath / "web" / "index.html";
+    
+    if (std::filesystem::exists(webPath)) {
+      std::string url = "file://" + webPath.string();
+#if defined(_WIN32)
+      std::replace(url.begin(), url.end(), '\\', '/');
+#endif
+      webConfig.defaultUrl = url;
+      
+      // Initialize WebView with SDL window handle
+      void* windowHandle = reinterpret_cast<void*>(pImpl->window);
+      pImpl->webViewManager->initialize(windowHandle, webConfig);
+      
+      // Set up IPC message callback to handle messages from React
+      pImpl->webViewManager->setMessageCallback([this](const std::string& message) {
+        this->handleIPCMessage(message);
+      });
+      
+      std::cout << "WebView initialized with: " << url << std::endl;
+    } else {
+      std::cerr << "Web resources not found at: " << webPath << std::endl;
+      pImpl->useWebView = false;
+    }
+  }
+
   return true;
 }
 
@@ -191,13 +279,6 @@ void MainWindow::run() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       ImGui_ImplSDL2_ProcessEvent(&event);
-
-      if (event.type == SDL_QUIT)
-        pImpl->done = true;
-      if (event.type == SDL_WINDOWEVENT &&
-          event.window.event == SDL_WINDOWEVENT_CLOSE &&
-          event.window.windowID == SDL_GetWindowID(pImpl->window))
-        pImpl->done = true;
 
       // Handle keyboard shortcuts
       if (event.type == SDL_KEYDOWN) {
@@ -262,6 +343,11 @@ void MainWindow::run() {
             pImpl->interactionHandler->showCrosshair();
           }
         }
+        // Open settings with Ctrl+,
+        else if ((event.key.keysym.mod & KMOD_CTRL) && event.key.keysym.sym == SDLK_COMMA) {
+          // Open settings - this would trigger a settings dialog
+          std::cout << "Settings shortcut triggered" << std::endl;
+        }
       }
 
       // Handle mouse wheel for zoom
@@ -276,8 +362,30 @@ void MainWindow::run() {
           SDL_GetMouseState(&mouseX, &mouseY);
           double normX = static_cast<double>(mouseX) / io.DisplaySize.x;
           double normY = static_cast<double>(mouseY) / io.DisplaySize.y;
-
-          pImpl->camera->zoom(zoomFactor, normX, normY);
+          
+          // Check if mouse is in price scale area (right side of chart)
+          double mouseRelX = mouseX - pImpl->chartAreaX;
+          bool inPriceScaleArea = (mouseRelX > pImpl->chartAreaWidth - pImpl->priceScaleWidth) && 
+                                  (mouseX >= pImpl->chartAreaX && mouseX <= pImpl->chartAreaX + pImpl->chartAreaWidth) &&
+                                  (mouseY >= pImpl->chartAreaY && mouseY <= pImpl->chartAreaY + pImpl->chartAreaHeight);
+          
+          // Check if mouse is in time scale area (bottom of chart)
+          double mouseRelY = mouseY - pImpl->chartAreaY;
+          bool inTimeScaleArea = (mouseRelY > pImpl->chartAreaHeight - pImpl->timeScaleHeight) &&
+                                (mouseX >= pImpl->chartAreaX && mouseX <= pImpl->chartAreaX + pImpl->chartAreaWidth) &&
+                                (mouseY >= pImpl->chartAreaY && mouseY <= pImpl->chartAreaY + pImpl->chartAreaHeight);
+          
+          if (inPriceScaleArea) {
+            // Only zoom price (Y-axis)
+            pImpl->camera->zoomPrice(zoomFactor, normY);
+          } else if (inTimeScaleArea) {
+            // Only zoom time (X-axis)
+            pImpl->camera->zoomTime(zoomFactor, normX);
+          } else {
+            // Normal zoom - both axes
+            pImpl->camera->zoom(zoomFactor, normX, normY);
+          }
+          
           pImpl->mouseWheelAccum = 0;
         }
       }
@@ -288,19 +396,48 @@ void MainWindow::run() {
           pImpl->isDragging = true;
           pImpl->lastMouseX = event.button.x;
           pImpl->lastMouseY = event.button.y;
+          
+          // Check if clicking on time scale (bottom area) or price scale (right area)
+          double mouseRelX = event.button.x - pImpl->chartAreaX;
+          double mouseRelY = event.button.y - pImpl->chartAreaY;
+          
+          // Time scale area: bottom 30 pixels of chart
+          if (mouseRelY > pImpl->chartAreaHeight - pImpl->timeScaleHeight && 
+              mouseRelX > 0 && mouseRelX < pImpl->chartAreaWidth) {
+            pImpl->isDraggingTimeScale = true;
+          }
+          // Price scale area: right 70 pixels of chart
+          else if (mouseRelX > pImpl->chartAreaWidth - pImpl->priceScaleWidth && 
+                   mouseRelY > 0 && mouseRelY < pImpl->chartAreaHeight) {
+            pImpl->isDraggingPriceScale = true;
+          }
         }
       }
 
       if (event.type == SDL_MOUSEBUTTONUP) {
         if (event.button.button == SDL_BUTTON_LEFT) {
           pImpl->isDragging = false;
+          pImpl->isDraggingTimeScale = false;
+          pImpl->isDraggingPriceScale = false;
         }
       }
 
       if (event.type == SDL_MOUSEMOTION && pImpl->isDragging) {
         double deltaX = (event.motion.x - pImpl->lastMouseX) / io.DisplaySize.x * 2.0;
         double deltaY = (event.motion.y - pImpl->lastMouseY) / io.DisplaySize.y * 2.0;
-        pImpl->camera->pan(-deltaX, deltaY); // Negative X for natural pan direction
+        
+        // Axis-specific panning
+        if (pImpl->isDraggingTimeScale) {
+          // Only pan time (horizontal)
+          pImpl->camera->panTime(-deltaX);
+        } else if (pImpl->isDraggingPriceScale) {
+          // Only pan price (vertical)
+          pImpl->camera->panPrice(deltaY);
+        } else {
+          // Normal pan - both axes
+          pImpl->camera->pan(-deltaX, deltaY);
+        }
+        
         pImpl->lastMouseX = event.motion.x;
         pImpl->lastMouseY = event.motion.y;
       }
@@ -378,6 +515,29 @@ void MainWindow::run() {
         }
         ImGui::EndMenu();
       }
+
+      if (ImGui::BeginMenu("Settings")) {
+        if (ImGui::MenuItem("Preferences", "Ctrl+,", false)) {
+          // Open settings dialog
+          std::cout << "Opening settings..." << std::endl;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Price Scale", "", false)) {
+          // Toggle price scale settings
+        }
+        if (ImGui::MenuItem("Time Scale", "", false)) {
+          // Toggle time scale settings  
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Layout", "", false)) {
+          pImpl->camera->fitToData(
+              pImpl->chartDataManager->getTimeRange().first,
+              pImpl->chartDataManager->getTimeRange().second,
+              pImpl->chartDataManager->getPriceRange().first,
+              pImpl->chartDataManager->getPriceRange().second);
+        }
+        ImGui::EndMenu();
+      }
       ImGui::EndMenuBar();
     }
 
@@ -389,6 +549,12 @@ void MainWindow::run() {
 
     // Update camera chart area
     pImpl->camera->setChartArea(chartMin.x, chartMin.y, chartWidth, chartHeight);
+    
+    // Store chart area for mouse interaction
+    pImpl->chartAreaX = chartMin.x;
+    pImpl->chartAreaY = chartMin.y;
+    pImpl->chartAreaWidth = chartWidth;
+    pImpl->chartAreaHeight = chartHeight;
 
     // Auto-fit on first data
     auto timeRange = pImpl->chartDataManager->getTimeRange();
@@ -693,6 +859,165 @@ void MainWindow::run() {
     }
 
     SDL_GL_SwapWindow(pImpl->window);
+  }
+}
+
+// Handle IPC messages from React frontend
+void MainWindow::handleIPCMessage(const std::string& jsonMessage) {
+  try {
+    auto message = IPCMessage::parse(jsonMessage);
+    std::cout << "[IPC] Received message: type=" << message.type 
+              << ", symbol=" << message.symbol 
+              << ", interval=" << message.interval << std::endl;
+    
+    if (message.type == "subscribe") {
+      subscribeToMarketData(message.symbol, message.interval);
+    } else if (message.type == "unsubscribe") {
+      unsubscribeFromMarketData();
+    } else if (message.type == "history") {
+      // Fetch historical data and send to frontend
+      if (pImpl->binanceClient && !message.symbol.empty()) {
+        uint64_t endTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        uint64_t startTime = endTime - (message.limit > 0 ? message.limit : 100) * 60000; // 1 minute candles
+        
+        pImpl->binanceClient->fetchKlines(
+          message.symbol, 
+          message.interval.empty() ? "1m" : message.interval,
+          startTime,
+          endTime,
+          [this, message](const std::vector<core::Candle>& candles) {
+            // Send historical candles to frontend
+            json response;
+            response["type"] = "history";
+            response["symbol"] = message.symbol;
+            response["interval"] = message.interval;
+            
+            std::vector<json> candleArray;
+            for (const auto& c : candles) {
+              json candleJson;
+              candleJson["time"] = c.start_time_ms / 1000; // Convert to seconds
+              candleJson["open"] = c.open;
+              candleJson["high"] = c.high;
+              candleJson["low"] = c.low;
+              candleJson["close"] = c.close;
+              candleJson["volume"] = c.volume;
+              candleArray.push_back(candleJson);
+            }
+            response["candles"] = candleArray;
+            
+            pImpl->webViewManager->sendToFrontend(response.dump());
+          }
+        );
+      }
+    } else if (message.type == "getStatus") {
+      // Send status response
+      json response;
+      response["type"] = "status";
+      response["status"] = "ok";
+      response["symbol"] = pImpl->currentTradingSymbol;
+      response["interval"] = pImpl->currentInterval;
+      response["subscribed"] = pImpl->isSubscribed;
+      pImpl->webViewManager->sendToFrontend(response.dump());
+    }
+    
+  } catch (const std::exception& e) {
+    std::cerr << "[IPC] Error handling message: " << e.what() << std::endl;
+    
+    // Send error response
+    json errorResponse;
+    errorResponse["type"] = "error";
+    errorResponse["errorMessage"] = e.what();
+    pImpl->webViewManager->sendToFrontend(errorResponse.dump());
+  }
+}
+
+// Send candle data to React frontend
+void MainWindow::sendCandleToFrontend(const core::Candle& candle, const std::string& symbol) {
+  // Create IPC message
+  IPCMessage msg;
+  msg.type = "candle";
+  msg.symbol = symbol;
+  msg.time = candle.start_time_ms / 1000; // Convert to seconds
+  msg.open = candle.open;
+  msg.high = candle.high;
+  msg.low = candle.low;
+  msg.close = candle.close;
+  msg.volume = candle.volume;
+  
+  // Send via WebView (if available)
+  if (pImpl->webViewManager && pImpl->webViewManager->isReady()) {
+    pImpl->webViewManager->sendToFrontend(msg);
+  }
+  
+  // Also broadcast via WebSocket to frontend
+  if (pImpl->wsServer && pImpl->wsServer->isRunning()) {
+    pImpl->wsServer->broadcast(msg.toJson());
+  }
+}
+
+// Subscribe to market data
+void MainWindow::subscribeToMarketData(const std::string& symbol, const std::string& interval) {
+  if (!pImpl->binanceClient) {
+    return;
+  }
+  
+  // Unsubscribe from previous if any
+  unsubscribeFromMarketData();
+  
+  pImpl->currentTradingSymbol = symbol.empty() ? "BTCUSDT" : symbol;
+  pImpl->currentInterval = interval.empty() ? "1m" : interval;
+  
+  std::cout << "[IPC] Subscribing to " << pImpl->currentTradingSymbol 
+            << " @ " << pImpl->currentInterval << std::endl;
+  
+  // Set up tick callback to convert to candles
+  pImpl->binanceClient->subscribeAggTrades(
+    pImpl->currentTradingSymbol,
+    [this](const core::Tick& tick) {
+      // Convert tick to candle (simplified - in production, you'd aggregate properly)
+      core::Candle candle;
+      candle.start_time_ms = (tick.timestamp_ms / 60000) * 60000; // Round to minute
+      candle.end_time_ms = candle.start_time_ms + 60000;
+      candle.open = tick.price;
+      candle.high = tick.price;
+      candle.low = tick.price;
+      candle.close = tick.price;
+      candle.volume = tick.quantity;
+      
+      sendCandleToFrontend(candle, pImpl->currentTradingSymbol);
+    }
+  );
+  
+  // Start the WebSocket connection
+  pImpl->binanceClient->connectAndRun();
+  pImpl->isSubscribed = true;
+  
+  // Send confirmation to frontend
+  json response;
+  response["type"] = "subscribed";
+  response["symbol"] = pImpl->currentTradingSymbol;
+  response["interval"] = pImpl->currentInterval;
+  pImpl->webViewManager->sendToFrontend(response.dump());
+}
+
+// Unsubscribe from market data
+void MainWindow::unsubscribeFromMarketData() {
+  if (pImpl->binanceClient && pImpl->isSubscribed) {
+    std::cout << "[IPC] Unsubscribing from market data" << std::endl;
+    pImpl->binanceClient->shutdown();
+    pImpl->isSubscribed = false;
+    
+    // Re-initialize for future subscriptions
+    pImpl->binanceClient->initialize();
+    
+    // Send confirmation to frontend
+    json response;
+    response["type"] = "unsubscribed";
+    response["symbol"] = pImpl->currentTradingSymbol;
+    if (pImpl->webViewManager && pImpl->webViewManager->isReady()) {
+      pImpl->webViewManager->sendToFrontend(response.dump());
+    }
   }
 }
 

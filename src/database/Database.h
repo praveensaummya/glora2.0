@@ -69,6 +69,23 @@ public:
   // Delete all data for a symbol
   bool deleteSymbolData(const std::string& symbol);
   
+  // Cleanup old data (older than specified days)
+  bool cleanupOldData(int keepDays = 7);
+  
+  // === User API Credentials ===
+  
+  // Save user API credentials
+  bool saveApiCredentials(const std::string& apiKey, const std::string& apiSecret, bool useTestnet);
+  
+  // Get saved API credentials (returns false if not found)
+  bool getApiCredentials(std::string& apiKey, std::string& apiSecret, bool& useTestnet) const;
+  
+  // Delete saved API credentials
+  bool deleteApiCredentials();
+  
+  // Check if API credentials exist
+  bool hasApiCredentials() const;
+  
   // Get database file path
   std::string getPath() const { return dbPath_; }
 

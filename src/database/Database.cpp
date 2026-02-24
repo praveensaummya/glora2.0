@@ -1,5 +1,7 @@
 #include "Database.h"
 #include <iostream>
+#include <chrono>
+#include <sstream>
 #include <sqlite3.h>
 #include <cstring>
 
@@ -69,9 +71,21 @@ bool Database::initialize(const std::string& dbPath) {
     CREATE INDEX IF NOT EXISTS idx_gaps_symbol ON gaps(symbol, filled);
   )";
   
+  const char* userSettingsTable = R"(
+    CREATE TABLE IF NOT EXISTS user_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      api_key TEXT,
+      api_secret TEXT,
+      use_testnet INTEGER DEFAULT 0,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+  )";
+  
   execute(ticksTable);
   execute(candlesTable);
   execute(gapsTable);
+  execute(userSettingsTable);
   
   std::cout << "Database initialized: " << dbPath << std::endl;
   return true;
@@ -336,6 +350,114 @@ bool Database::deleteSymbolData(const std::string& symbol) {
   execute("DELETE FROM candles WHERE symbol = '" + symbol + "'");
   execute("DELETE FROM gaps WHERE symbol = '" + symbol + "'");
   return true;
+}
+
+bool Database::cleanupOldData(int keepDays) {
+  if (!db_) return false;
+  
+  // Calculate cutoff timestamp (keepDays ago in milliseconds)
+  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()
+  ).count();
+  
+  uint64_t cutoffTime = now - (static_cast<uint64_t>(keepDays) * 24 * 60 * 60 * 1000);
+  
+  std::cout << "[Database] Cleaning up data older than " << keepDays 
+            << " days (cutoff: " << cutoffTime << ")" << std::endl;
+  
+  // Delete old ticks
+  std::stringstream ss;
+  ss << "DELETE FROM ticks WHERE timestamp_ms < " << cutoffTime;
+  bool success = execute(ss.str());
+  
+  // Delete old candles
+  ss.str("");
+  ss << "DELETE FROM candles WHERE start_time_ms < " << cutoffTime;
+  success = execute(ss.str()) && success;
+  
+  // Delete old gaps
+  ss.str("");
+  ss << "DELETE FROM gaps WHERE start_time < " << cutoffTime;
+  success = execute(ss.str()) && success;
+  
+  // Vacuum to reclaim space
+  if (success) {
+    execute("VACUUM");
+    std::cout << "[Database] Cleanup completed successfully" << std::endl;
+  }
+  
+  return success;
+}
+
+bool Database::saveApiCredentials(const std::string& apiKey, const std::string& apiSecret, bool useTestnet) {
+  if (!db_) return false;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    INSERT OR REPLACE INTO user_settings (id, api_key, api_secret, use_testnet, updated_at)
+    VALUES (1, ?, ?, ?, strftime('%s', 'now'))
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return false;
+  
+  sqlite3_bind_text(stmt, 1, apiKey.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, apiSecret.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(stmt, 3, useTestnet ? 1 : 0);
+  
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  
+  std::cout << "[Database] API credentials saved successfully" << std::endl;
+  return rc == SQLITE_DONE;
+}
+
+bool Database::getApiCredentials(std::string& apiKey, std::string& apiSecret, bool& useTestnet) const {
+  if (!db_) return false;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = "SELECT api_key, api_secret, use_testnet FROM user_settings WHERE id = 1";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return false;
+  
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const char* key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    const char* secret = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    
+    if (key && secret) {
+      apiKey = key;
+      apiSecret = secret;
+      useTestnet = sqlite3_column_int(stmt, 2) == 1;
+      sqlite3_finalize(stmt);
+      return true;
+    }
+  }
+  
+  sqlite3_finalize(stmt);
+  return false;
+}
+
+bool Database::deleteApiCredentials() {
+  if (!db_) return false;
+  
+  const char* sql = "DELETE FROM user_settings WHERE id = 1";
+  sqlite3_stmt* stmt;
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return false;
+  
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  
+  std::cout << "[Database] API credentials deleted" << std::endl;
+  return rc == SQLITE_DONE;
+}
+
+bool Database::hasApiCredentials() const {
+  std::string apiKey, apiSecret;
+  bool useTestnet;
+  return getApiCredentials(apiKey, apiSecret, useTestnet) && !apiKey.empty();
 }
 
 } // namespace database

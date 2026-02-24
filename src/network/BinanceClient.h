@@ -17,6 +17,7 @@ using json = nlohmann::json;
 using OnCandleCallback = std::function<void(const core::Candle &)>;
 using OnTickCallback = std::function<void(const core::Tick &)>;
 using OnTicksCallback = std::function<void(const std::vector<core::Tick> &)>;
+using OnDepthCallback = std::function<void(const std::vector<std::pair<double, double>>& bids, const std::vector<std::pair<double, double>>& asks)>;
 
 class BinanceClient {
 public:
@@ -39,6 +40,11 @@ public:
   void fetchKlines(const std::string& symbol, const std::string& interval,
                     uint64_t startTime, uint64_t endTime,
                     std::function<void(const std::vector<core::Candle>&)> onDataCallback);
+
+  // Fetch order book depth (for DOM display)
+  void fetchDepth(const std::string& symbol, int limit,
+                  std::function<void(const std::vector<std::pair<double, double>>& bids,
+                                    const std::vector<std::pair<double, double>>& asks)> onDataCallback);
 
   // --- WebSockets ---
   // Subscribe to real-time aggTrade stream

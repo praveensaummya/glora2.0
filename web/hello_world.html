@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glora 2.0 - Trading Chart</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #e8e8e8;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            color: #a0a0a0;
+            margin-bottom: 32px;
+        }
+        
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            border-radius: 20px;
+            color: #00ff88;
+            font-size: 0.9rem;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #00ff88;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .info {
+            margin-top: 32px;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            text-align: left;
+        }
+        
+        .info h3 {
+            color: #00d4ff;
+            margin-bottom: 8px;
+            font-size: 1rem;
+        }
+        
+        .info p {
+            font-size: 0.85rem;
+            color: #888;
+            line-height: 1.6;
+        }
+        
+        .log {
+            margin-top: 24px;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            text-align: left;
+            min-height: 100px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.8rem;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        
+        .log-entry .time {
+            color: #666;
+        }
+        
+        .log-entry .msg {
+            color: #00d4ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Glora 2.0</h1>
+        <p class="subtitle">WebView Integration Successful! 🚀</p>
+        
+        <div class="status">
+            <span class="status-dot"></span>
+            Connected to C++ Backend
+        </div>
+        
+        <div class="info">
+            <h3>IPC Communication</h3>
+            <p>The WebView is now connected to the C++ backend via IPC. 
+            JSON messages can be sent between the JavaScript and C++ layers.
+            Ready for TradingView chart integration.</p>
+        </div>
+        
+        <div class="log" id="log">
+            <div class="log-entry">
+                <span class="time">[INIT]</span>
+                <span class="msg">WebView initialized successfully</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global namespace for IPC communication
+        window.glora = {
+            // Message queue for C++ -> JS messages
+            messageQueue: [],
+            
+            // Callback for incoming messages from C++
+            onMessage: function(message) {
+                try {
+                    const data = JSON.parse(message);
+                    this.log('Received: ' + JSON.stringify(data));
+                    
+                    // Handle different message types
+                    if (data.type === 'ping') {
+                        this.sendToCpp({ type: 'pong', timestamp: Date.now() });
+                    } else if (data.type === 'chartData') {
+                        this.log('Chart data received: ' + data.symbol);
+                    }
+                } catch (e) {
+                    this.log('Error parsing message: ' + e.message);
+                }
+            },
+            
+            // Send message to C++ backend
+            sendToCpp: function(data) {
+                const message = JSON.stringify(data);
+                this.log('Sending: ' + message);
+                
+                // This will be called from C++ via executeScript
+                if (window.gloraCpp && window.gloraCpp.onMessage) {
+                    window.gloraCpp.onMessage(message);
+                }
+            },
+            
+            // Log to the on-screen log
+            log: function(msg) {
+                const logEl = document.getElementById('log');
+                const entry = document.createElement('div');
+                entry.className = 'log-entry';
+                
+                const time = new Date().toLocaleTimeString();
+                entry.innerHTML = '<span class="time">[' + time + ']</span> <span class="msg">' + msg + '</span>';
+                
+                logEl.appendChild(entry);
+                logEl.scrollTop = logEl.scrollHeight;
+                
+                console.log('[Glora WebView] ' + msg);
+            },
+            
+            // Initialize IPC bridge
+            init: function() {
+                this.log('IPC bridge initialized');
+                
+                // Notify C++ that we're ready
+                if (window.gloraCpp && window.gloraCpp.onReady) {
+                    window.gloraCpp.onReady();
+                }
+            }
+        };
+        
+        // Initialize when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            window.glora.init();
+        });
+        
+        // Also try immediately in case DOM is already loaded
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            window.glora.init();
+        }
+    </script>
+</body>
+</html>

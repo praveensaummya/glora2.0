@@ -32,6 +32,7 @@ struct AppSettings {
   
   // Chart Settings
   std::string defaultSymbol = "BTCUSDT";
+  std::string defaultInterval = "1m";
   HistoryDuration historyDuration = HistoryDuration::LAST_7_DAYS;
   int customDays = 7;
   

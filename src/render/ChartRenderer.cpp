@@ -11,6 +11,9 @@
 namespace glora {
 namespace render {
 
+// Price scale width for UI
+static const float kPriceScaleWidth = 70.0f;
+
 ChartRenderer::ChartRenderer() : candleShader_(0), volumeShader_(0) {}
 
 ChartRenderer::~ChartRenderer() {
@@ -62,12 +65,23 @@ void ChartRenderer::render(int width, int height, const Camera &camera) {
     drawList->AddLine(ImVec2(chartX, y), ImVec2(chartX + chartW, y),
                       IM_COL32(40, 40, 50, 255), 1.0f);
 
-    // Price label (right side)
+    // Price label (right side) - enhanced display with background
     char priceStr[32];
     snprintf(priceStr, sizeof(priceStr), "%.2f", price);
-    drawList->AddText(ImVec2(chartX + chartW - 60, y - 8), IM_COL32(150, 150, 150, 255),
-                      priceStr);
+    
+    // Draw price label background
+    ImVec2 priceLabelMin(chartX + chartW - 65, y - 10);
+    ImVec2 priceLabelMax(chartX + chartW, y + 10);
+    drawList->AddRectFilled(priceLabelMin, priceLabelMax, 
+                           IM_COL32(25, 28, 35, 200), 2.0f);
+    drawList->AddText(ImVec2(chartX + chartW - 60, y - 7), 
+                      IM_COL32(180, 180, 190, 255), priceStr);
   }
+  
+  // Draw price scale area background
+  drawList->AddRectFilled(ImVec2(chartX + chartW - kPriceScaleWidth, chartY),
+                         ImVec2(chartX + chartW, chartY + chartAreaHeight),
+                         IM_COL32(20, 22, 30, 100), 0.0f);
 
   // Vertical grid lines (time axis)
   auto [minTime, maxTime] = camera.getTimeRange();
@@ -78,14 +92,25 @@ void ChartRenderer::render(int width, int height, const Camera &camera) {
     drawList->AddLine(ImVec2(x, chartY), ImVec2(x, chartY + chartAreaHeight),
                       IM_COL32(40, 40, 50, 255), 1.0f);
 
-    // Time label
+    // Time label - enhanced display with better visibility
     std::time_t timeSec = static_cast<std::time_t>(time / 1000);
     std::tm* tm = std::localtime(&timeSec);
     char timeStr[32];
     strftime(timeStr, sizeof(timeStr), "%m/%d %H:%M", tm);
-    drawList->AddText(ImVec2(x - 35, chartY + chartAreaHeight + 5), IM_COL32(150, 150, 150, 255),
-                      timeStr);
+    
+    // Draw time label background for better visibility
+    ImVec2 timeLabelMin(x - 38, chartY + chartAreaHeight + 2);
+    ImVec2 timeLabelMax(x + 38, chartY + chartAreaHeight + 22);
+    drawList->AddRectFilled(timeLabelMin, timeLabelMax, 
+                           IM_COL32(25, 28, 35, 200), 3.0f);
+    drawList->AddText(ImVec2(x - 35, chartY + chartAreaHeight + 5), 
+                      IM_COL32(180, 180, 190, 255), timeStr);
   }
+  
+  // Draw time scale label area indicator
+  drawList->AddRectFilled(ImVec2(chartX, chartY + chartAreaHeight),
+                         ImVec2(chartX + chartW, chartY + chartH),
+                         IM_COL32(20, 22, 30, 150), 0.0f);
 
   // Draw chart based on type
   switch (chartType_) {

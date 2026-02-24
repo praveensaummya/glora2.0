@@ -1,0 +1,226 @@
+// market_data.fbs - FlatBuffers Schema for Market Data
+//
+// This schema defines binary message formats for efficient
+// real-time market data serialization and deserialization.
+//
+// Message Types:
+// - Candle: OHLCV candlestick data
+// - Trade: Individual trade execution
+// - OrderBook: Full order book snapshot
+// - OrderBookUpdate: Incremental order book update
+// - Ticker: 24hr ticker data
+// - AggTrade: Aggregated trade data
+
+namespace glora.market_data;
+
+// Enums
+enum MessageType : byte {
+  Unknown = 0,
+  Candle = 1,
+  Trade = 2,
+  OrderBook = 3,
+  OrderBookUpdate = 4,
+  Ticker = 5,
+  AggTrade = 6
+}
+
+enum Side : byte {
+  Unknown = 0,
+  Buy = 1,
+  Sell = 2
+}
+
+enum OrderBookEntryType : byte {
+  Bid = 0,
+  Ask = 1
+}
+
+// Root message envelope
+table MarketDataMessage {
+  type: MessageType = Unknown;
+  timestamp: int64;
+  sequence: int64;
+  
+  // Message payloads (only one will be non-null)
+  candle: Candle?;
+  trade: Trade?;
+  orderBook: OrderBook?;
+  orderBookUpdate: OrderBookUpdate?;
+  ticker: Ticker?;
+  aggTrade: AggTrade?;
+}
+
+// OHLCV Candlestick Data
+table Candle {
+  symbol: string (key, required);
+  interval: string;
+  
+  // Time (milliseconds since epoch)
+  openTime: int64;
+  closeTime: int64;
+  
+  // Price data (scaled by 10000 for precision)
+  openPrice: int64;
+  highPrice: int64;
+  lowPrice: int64;
+  closePrice: int64;
+  
+  // Volume (scaled by 1000000)
+  volume: int64;
+  quoteVolume: int64;
+  
+  // Metadata
+  trades: int32;
+  closed: bool;
+}
+
+// Individual Trade
+table Trade {
+  symbol: string (key, required);
+  
+  // Trade ID
+  tradeId: int64;
+  orderId: int64;
+  
+  // Price and quantity (scaled)
+  price: int64;
+  quantity: int64;
+  quoteQuantity: int64;
+  
+  // Time
+  tradeTime: int64;
+  orderTime: int64;
+  
+  // Trade info
+  isBuyerMaker: bool;
+  isBestMatch: bool;
+}
+
+// Aggregated Trade (from Binance)
+table AggTrade {
+  symbol: string (key, required);
+  
+  // Aggregate trade ID
+  aggTradeId: int64;
+  lastTradeId: int64;
+  
+  // Price and quantity (scaled)
+  price: int64;
+  quantity: int64;
+  quoteQuantity: int64;
+  
+  // Time
+  tradeTime: int64;
+  
+  // Trade info
+  side: Side;
+  firstTradeId: int64;
+  count: int32;
+}
+
+// Full Order Book Snapshot
+table OrderBook {
+  symbol: string (key, required);
+  
+  // Sequence number for ordering
+  lastUpdateId: int64;
+  
+  // Bids (price, quantity)
+  bids: [OrderBookEntry];
+  asks: [OrderBookEntry];
+}
+
+// Single Order Book Entry
+table OrderBookEntry {
+  price: int64;
+  quantity: int64;
+}
+
+// Incremental Order Book Update
+table OrderBookUpdate {
+  symbol: string (key, required);
+  
+  // Sequence info
+  lastUpdateId: int64;
+  transactionTime: int64;
+  
+  // Updated entries
+  bids: [OrderBookEntry];
+  asks: [OrderBookEntry];
+}
+
+// 24hr Ticker
+table Ticker {
+  symbol: string (key, required);
+  
+  // Price change
+  priceChange: int64;
+  priceChangePercent: int64;
+  
+  // Weighted average price
+  weightedAvgPrice: int64;
+  
+  // Price stats
+  prevClosePrice: int64;
+  lastPrice: int64;
+  lastQty: int64;
+  bidPrice: int64;
+  bidQty: int64;
+  askPrice: int64;
+  askQty: int64;
+  
+  // High/Low
+  openPrice: int64;
+  highPrice: int64;
+  lowPrice: int64;
+  
+  // Volume (scaled by 1000000)
+  volume: int64;
+  quoteVolume: int64;
+  
+  // Stats time range
+  openTime: int64;
+  closeTime: int64;
+  
+  // Trade stats
+  firstTradeId: int64;
+  lastTradeId: int64;
+  numTrades: int32;
+}
+
+// Batch of candles for history
+table CandleBatch {
+  symbol: string;
+  interval: string;
+  candles: [Candle];
+}
+
+// Batch of trades
+table TradeBatch {
+  symbol: string;
+  trades: [Trade];
+}
+
+// Performance metrics (for monitoring)
+table PerformanceMetrics {
+  // Timing
+  encodeTimeUs: int64;
+  decodeTimeUs: int64;
+  
+  // Throughput
+  messagesPerSecond: int32;
+  bytesPerSecond: int64;
+  
+  // Sizes
+  avgMessageSize: int32;
+  maxMessageSize: int32;
+  
+  // Counts
+  totalMessages: int64;
+  errorCount: int64;
+}
+
+root_type MarketDataMessage;
+file_identifier "GLRD";  // GLora Raw Data
+file_extension "glrd";
+

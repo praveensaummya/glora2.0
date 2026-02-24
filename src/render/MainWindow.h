@@ -2,7 +2,10 @@
 
 #include "../core/DataModels.h"
 #include "ChartInteractionHandler.h"
+#include "WebViewManager.h"
+#include "../network/WebSocketServer.h"
 #include <memory>
+#include <string>
 
 namespace glora {
 namespace render {
@@ -27,6 +30,18 @@ public:
 private:
   struct Impl;
   std::unique_ptr<Impl> pImpl;
+  
+  // Handle IPC messages from React frontend
+  void handleIPCMessage(const std::string& jsonMessage);
+  
+  // Send candle data to React frontend
+  void sendCandleToFrontend(const core::Candle& candle, const std::string& symbol);
+  
+  // Subscribe to market data
+  void subscribeToMarketData(const std::string& symbol, const std::string& interval);
+  
+  // Unsubscribe from market data
+  void unsubscribeFromMarketData();
 };
 
 } // namespace render
