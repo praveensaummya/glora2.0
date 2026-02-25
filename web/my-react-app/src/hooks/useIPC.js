@@ -37,9 +37,7 @@ if (typeof window !== 'undefined') {
   
   // Connect to backend WebSocket for direct communication
   // This works when running outside the C++ app (e.g., Vite dev server)
-  let wsConnected = false;
   backendWS.onConnectionChange((connected) => {
-    wsConnected = connected;
     console.log('[IPC] Backend WebSocket:', connected ? 'connected' : 'disconnected');
   });
   
@@ -93,7 +91,7 @@ if (typeof window !== 'undefined') {
         onSuccess: () => {},
         onFailure: () => {}
       });
-    } else if (wsConnected) {
+    } else if (backendWS.isConnected) {
       // Use backend WebSocket
       backendWS.send(message);
     } else {

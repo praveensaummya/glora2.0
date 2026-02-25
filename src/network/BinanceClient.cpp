@@ -201,7 +201,7 @@ void BinanceClient::fetchHistoricalAggTrades(
     
     // Build query string
     std::stringstream ss;
-    ss << "/api/v3/aggTrade?"
+    ss << "/api/v3/aggTrades?"
        << "symbol=" << symbol 
        << "&startTime=" << currentStart
        << "&endTime=" << currentEnd
