@@ -11,7 +11,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
-  getWebSocket, 
   createWebSocket, 
   ConnectionState, 
   StreamBuilder 
@@ -148,9 +147,12 @@ export function useIPC() {
       timestamp: Date.now()
     };
     
-    // Try native IPC first
+    // Try native IPC first (works when running in C++ WebView)
     if (window.glora && window.glora.send) {
       window.glora.send(messageWithId);
+    } else if (backendWS.isConnected) {
+      // Fallback: use WebSocket (works when running in dev server)
+      backendWS.send(messageWithId);
     }
     
     // Also dispatch a custom event for internal components
@@ -206,7 +208,16 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
   const [latestCandle, setLatestCandle] = useState(null);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [error, setError] = useState(null);
+  const [loadingProgress, setLoadingProgress] = useState({
+    isLoading: true,
+    percent: 0,
+    estimatedTimeRemaining: null,
+    status: 'Initializing...'
+  });
   const { sendMessage, isConnected } = useIPC();
+  const loadingStartTime = useRef(null);
+  const processedCount = useRef(0);
+  const totalToProcess = useRef(0);
 
   // Handle incoming messages
   useEffect(() => {
@@ -257,9 +268,39 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
         });
         
         setCandles(historicalCandles);
-      } else if (message.type === 'footprint') {
-        // Handle footprint response
-        console.log('[IPC] Received footprint data:', message.profile);
+        
+        // Mark loading as complete
+        setLoadingProgress({
+          isLoading: false,
+          percent: 100,
+          estimatedTimeRemaining: 0,
+          status: 'Complete'
+        });
+      } else if (message.type === 'historyProgress') {
+        // Handle progress updates from backend
+        const { processed, total, currentPhase } = message;
+        processedCount.current = processed;
+        totalToProcess.current = total;
+        
+        const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+        
+        // Calculate estimated time remaining
+        let estimatedTimeRemaining = null;
+        if (loadingStartTime.current && processed > 0) {
+          const elapsed = Date.now() - loadingStartTime.current;
+          const rate = processed / elapsed; // items per ms
+          const remaining = total - processed;
+          if (rate > 0) {
+            estimatedTimeRemaining = Math.round(remaining / rate / 1000); // seconds
+          }
+        }
+        
+        setLoadingProgress({
+          isLoading: true,
+          percent,
+          estimatedTimeRemaining,
+          status: currentPhase || 'Loading historical data...'
+        });
       } else if (message.type === 'tick') {
         // Handle real-time tick
         console.log('[IPC] Received tick:', message);
@@ -280,6 +321,17 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
    * @param {number} limit - Maximum number of candles
    */
   const requestHistory = useCallback((days = 7, limit = 500) => {
+    // Reset loading state
+    setLoadingProgress({
+      isLoading: true,
+      percent: 0,
+      estimatedTimeRemaining: null,
+      status: 'Starting data fetch...'
+    });
+    loadingStartTime.current = Date.now();
+    processedCount.current = 0;
+    totalToProcess.current = limit;
+    
     const cacheKey = getCacheKey(symbol, interval);
     const cached = historyCache.get(cacheKey);
     
@@ -400,13 +452,14 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
         unsubscribe();
       }
     };
-  }, [isConnected, symbol, interval]);
+  }, [isConnected, symbol, interval, requestHistory, subscribe, unsubscribe, isSubscribed]);
 
   return {
     candles,
     latestCandle,
     isSubscribed,
     error,
+    loadingProgress,
     subscribe,
     unsubscribe,
     fetchHistory,

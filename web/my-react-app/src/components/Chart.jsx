@@ -12,34 +12,25 @@ export default function Chart({
   theme = 'dark', 
   symbol = 'BTCUSDT', 
   interval: initialInterval = '1m',
-  indicators = [],
-  onIntervalChange
+  indicators = []
 }) {
   const chartContainerRef = useRef(null)
   const chartRef = useRef(null)
   const candlestickSeriesRef = useRef(null)
   const volumeSeriesRef = useRef(null)
   const lastCandleRef = useRef(null)
-  const [interval, setInterval] = useState(initialInterval)
+  const [interval] = useState(initialInterval)
   
   // Indicator series refs
   const indicatorSeriesRefs = useRef({})
   
   // Get market data from IPC
-  const { candles, latestCandle, error } = useMarketData(symbol, interval)
+  const { candles, latestCandle, error, loadingProgress } = useMarketData(symbol, interval)
   
   // Determine states from data availability
   const isLoading = !candles || candles.length === 0
   const hasError = !!error
 
-  // Handle interval change
-  const handleIntervalChange = useCallback((newInterval) => {
-    setInterval(newInterval)
-    if (onIntervalChange) {
-      onIntervalChange(newInterval)
-    }
-  }, [onIntervalChange])
-  
   // Theme colors
   const isDark = theme === 'dark'
   const backgroundColor = isDark ? '#0f172a' : '#ffffff'
@@ -420,15 +411,43 @@ export default function Chart({
     }
   }, [latestCandle, candles, updateIndicators])
   
-  // Show loading state when no data
-  if (isLoading) {
+  // Show loading state when there's no data or still loading from backend
+  if (isLoading || (loadingProgress && loadingProgress.isLoading)) {
+    const progress = loadingProgress || { percent: 0, estimatedTimeRemaining: null, status: 'Connecting to backend...' };
+    const formatTime = (seconds) => {
+      if (seconds === null || seconds === undefined || seconds === 0) return 'Calculating...';
+      if (seconds < 60) return `${seconds}s remaining`;
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}m ${secs}s remaining`;
+    };
+    
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900/50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin"></div>
+        <div className="flex flex-col items-center gap-4 w-64">
+          <div className="w-16 h-16 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin"></div>
+          
+          {/* Progress Bar */}
+          <div className="w-full">
+            <div className="flex justify-between items-center mb-1">
+              <span className="text-sm font-medium text-cyan-400">{progress.status}</span>
+              <span className="text-sm font-bold text-cyan-400">{progress.percent}%</span>
+            </div>
+            <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${progress.percent}%` }}
+              />
+            </div>
+            <div className="flex justify-between items-center mt-2">
+              <span className="text-xs text-slate-500">Loading market data</span>
+              <span className="text-xs text-slate-400 font-mono">{formatTime(progress.estimatedTimeRemaining)}</span>
+            </div>
+          </div>
+          
           <div className="text-center">
-            <p className="text-cyan-400 font-medium">Connecting to backend...</p>
-            <p className="text-slate-500 text-sm mt-1">Waiting for market data from {symbol}</p>
+            <p className="text-slate-400 text-sm">Fetching {symbol} historical data</p>
+            <p className="text-slate-500 text-xs mt-1">Interval: {interval}</p>
           </div>
         </div>
       </div>

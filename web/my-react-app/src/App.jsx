@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartLine, faMoneyBillWave, faExchange, faCog, faRightFromBracket, faWallet, faBell, faSearch, faBars, faChartSimple, faLineChart, faBorderAll, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
+import { faChartLine, faMoneyBillWave, faExchange, faCog, faRightFromBracket, faWallet, faBell, faSearch, faBars, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
 import Chart from './components/Chart'
 import DOM from './components/DOM'
 import FootprintChart from './components/FootprintChart'
@@ -27,11 +27,7 @@ function App() {
   const [logs, setLogs] = useState([])
   const [symbol, setSymbol] = useState('BTCUSDT')
   const [interval, setInterval] = useState('1m')
-  const [indicators, setIndicators] = useState(['sma20', 'ema12'])
-  const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
-  const [showDOM, setShowDOM] = useState(false)
   const [showFootprint, setShowFootprint] = useState(false)
-  const [domDepth, setDomDepth] = useState(20)
   const [footprintPOC, setFootprintPOC] = useState(null)
   const [footprintVA, setFootprintVA] = useState(null)
   const [footprintImbalances, setFootprintImbalances] = useState([])
@@ -51,23 +47,6 @@ function App() {
   const handleIntervalChange = useCallback((newInterval) => {
     setInterval(newInterval)
     addLog(`Switched to ${newInterval} timeframe`)
-  }, [])
-
-  // Handle indicator toggle
-  const toggleIndicator = useCallback((indicatorId) => {
-    setIndicators(prev => {
-      if (prev.includes(indicatorId)) {
-        return prev.filter(i => i !== indicatorId)
-      } else {
-        return [...prev, indicatorId]
-      }
-    })
-  }, [])
-
-  // Handle DOM depth change
-  const handleDOMDepthChange = useCallback((depth) => {
-    setDomDepth(depth)
-    addLog(`DOM depth changed to ${depth} levels`)
   }, [])
 
   // Toggle footprint chart mode
@@ -199,35 +178,6 @@ function App() {
               ))}
             </div>
 
-            {/* Indicator Toggle */}
-            <button 
-              onClick={() => setShowIndicatorPanel(!showIndicatorPanel)}
-              className={`p-2 rounded-lg transition-colors ${
-                showIndicatorPanel 
-                  ? 'bg-cyan-500/20 text-cyan-400' 
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-              title="Toggle Indicators"
-            >
-              <FontAwesomeIcon icon={faChartSimple} />
-            </button>
-
-            {/* DOM Toggle */}
-            <button 
-              onClick={() => {
-                setShowDOM(!showDOM)
-                if (!showDOM) addLog('Order Book (DOM) panel opened')
-              }}
-              className={`p-2 rounded-lg transition-colors ${
-                showDOM 
-                  ? 'bg-purple-500/20 text-purple-400' 
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-              title="Toggle DOM Panel"
-            >
-              <FontAwesomeIcon icon={faBorderAll} />
-            </button>
-
             {/* Footprint Chart Toggle */}
             <button 
               onClick={toggleFootprintChart}
@@ -251,7 +201,7 @@ function App() {
               }`}
               title="Toggle Session Summary"
             >
-              <FontAwesomeIcon icon={faChartSimple} />
+              <FontAwesomeIcon icon={faLayerGroup} />
             </button>
 
             {/* Search */}
@@ -293,81 +243,14 @@ function App() {
                 theme="dark" 
                 symbol={symbol}
                 interval={interval}
-                indicators={indicators}
               />
             )}
           </div>
-
-          {/* DOM Panel */}
-          {showDOM && (
-            <div className="w-72 flex-shrink-0">
-              <DOM 
-                depth={domDepth}
-                onDepthChange={handleDOMDepthChange}
-              />
-            </div>
-          )}
 
           {/* Session Summary */}
           {showSessionSummary && (
             <div className="flex-shrink-0">
               <SessionSummary compact />
-            </div>
-          )}
-
-          {/* Indicator Panel */}
-          {showIndicatorPanel && (
-            <div className="w-64 bg-slate-900/50 rounded-2xl border border-slate-700/50 p-4">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-                <FontAwesomeIcon icon={faLineChart} className="text-cyan-400" />
-                Indicators
-              </h3>
-              
-              <div className="space-y-2">
-                {AVAILABLE_INDICATORS.map((indicator) => (
-                  <button
-                    key={indicator.id}
-                    onClick={() => toggleIndicator(indicator.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
-                      indicators.includes(indicator.id)
-                        ? 'bg-slate-700 text-white'
-                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span 
-                        className="w-3 h-3 rounded-full" 
-                        style={{ backgroundColor: indicator.color }}
-                      />
-                      <span>{indicator.name}</span>
-                    </div>
-                    {indicators.includes(indicator.id) && (
-                      <span className="text-xs text-green-400">ON</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-700">
-                <h4 className="text-xs font-medium text-slate-400 mb-2">Active Indicators</h4>
-                <div className="flex flex-wrap gap-1">
-                  {indicators.map((ind) => {
-                    const info = AVAILABLE_INDICATORS.find(i => i.id === ind)
-                    return info ? (
-                      <span 
-                        key={ind}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs"
-                        style={{ backgroundColor: `${info.color}20`, color: info.color }}
-                      >
-                        {info.name}
-                      </span>
-                    ) : null
-                  })}
-                  {indicators.length === 0 && (
-                    <span className="text-xs text-slate-500">No indicators selected</span>
-                  )}
-                </div>
-              </div>
             </div>
           )}
         </div>
@@ -394,9 +277,6 @@ function App() {
                   <span className="text-purple-400">Imbalances: {footprintImbalances.length}</span>
                 )}
               </>
-            )}
-            {showDOM && (
-              <span className="text-purple-400">DOM: ON</span>
             )}
           </div>
           <div className="flex items-center gap-4">
