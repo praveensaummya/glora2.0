@@ -168,19 +168,21 @@ int main(int argc, char *argv[]) {
 
   // Add quit message handler to API Handler
   std::atomic<bool> quitRequested(false);
-  apiHandler->setOnQuitCallback([&quitRequested]() {
+  apiHandler->setOnQuitCallback([&quitRequested, &mainWindow]() {
     std::cout << "[Main] Quit requested via API" << std::endl;
     quitRequested = true;
+    mainWindow.quit();
   });
 
   // Console input listener thread for 'q' or 'quit' command
-  std::thread consoleInputThread([&quitRequested]() {
+  std::thread consoleInputThread([&quitRequested, &mainWindow]() {
     std::string input;
     while (!quitRequested.load()) {
       if (std::getline(std::cin, input)) {
         if (input == "q" || input == "Q" || input == "quit" || input == "QUIT") {
           std::cout << "[Main] Quit requested via console" << std::endl;
           quitRequested = true;
+          mainWindow.quit();
           break;
         }
       }

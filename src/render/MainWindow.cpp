@@ -862,6 +862,10 @@ void MainWindow::run() {
   }
 }
 
+void MainWindow::quit() {
+  pImpl->done = true;
+}
+
 // Handle IPC messages from React frontend
 void MainWindow::handleIPCMessage(const std::string& jsonMessage) {
   try {

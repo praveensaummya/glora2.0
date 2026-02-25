@@ -14,3 +14,7 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+
+glora_data.db
+glora_data.db-shm
+glora_data.db-wal

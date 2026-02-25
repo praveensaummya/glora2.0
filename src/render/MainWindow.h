@@ -27,6 +27,9 @@ public:
   // Add a single raw tick for testing
   void addRawTick(const core::Tick &tick);
 
+  // Signal the window to quit
+  void quit();
+
 private:
   struct Impl;
   std::unique_ptr<Impl> pImpl;
