@@ -73,6 +73,12 @@ void ApiHandler::handleMessage(const std::string& messageStr) {
             handleLoadCredentials(message);
         } else if (type == "deleteCredentials") {
             handleDeleteCredentials(message);
+        } else if (type == "quit") {
+            std::cout << "[ApiHandler] Quit requested" << std::endl;
+            // Signal shutdown - we'll handle this via callback
+            if (onQuitCallback_) {
+                onQuitCallback_();
+            }
         } else {
             std::cerr << "[ApiHandler] Unknown message type: " << type << std::endl;
             auto response = buildErrorResponse("Unknown message type: " + type);
@@ -136,14 +142,27 @@ void ApiHandler::handleGetHistory(const json& message) {
                 interval,
                 startTime,
                 endTime,
-                [this, symbol](const std::vector<core::Candle>& fetchedCandles) {
+                [this, symbol, message](const std::vector<core::Candle>& fetchedCandles) {
                     if (!fetchedCandles.empty() && database_) {
                         database_->insertCandles(symbol, fetchedCandles);
                         std::cout << "[ApiHandler] Saved " << fetchedCandles.size() 
                                   << " candles to database" << std::endl;
                     }
+                    // Fetch complete - now send response with fresh data
+                    std::vector<core::Candle> updatedCandles;
+                    if (database_) {
+                        updatedCandles = database_->getCandles(symbol, 
+                            static_cast<uint64_t>(message.value("days", 7)) * 24 * 60 * 60 * 1000,
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch()
+                            ).count());
+                    }
+                    auto response = buildHistoryResponse(updatedCandles);
+                    response["requestId"] = getRequestId(message);
+                    broadcast(response);
                 }
             );
+            return; // Don't send response now - wait for async callback
         }
     }
     
@@ -325,6 +344,10 @@ void ApiHandler::broadcast(const json& message) {
 
 void ApiHandler::setOnTickCallback(std::function<void(const core::Tick&)> callback) {
     onTickCallback_ = std::move(callback);
+}
+
+void ApiHandler::setOnQuitCallback(std::function<void()> callback) {
+    onQuitCallback_ = std::move(callback);
 }
 
 void ApiHandler::updateSettings(const settings::AppSettings& settings) {

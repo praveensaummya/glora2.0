@@ -58,6 +58,11 @@ public:
     void setOnTickCallback(std::function<void(const core::Tick&)> callback);
 
     /**
+     * Set callback for quit request
+     */
+    void setOnQuitCallback(std::function<void()> callback);
+
+    /**
      * Get current settings
      */
     const settings::AppSettings& getSettings() const { return settings_; }
@@ -100,6 +105,7 @@ private:
     bool isInitialized_ = false;
     std::string currentSymbol_;
     std::function<void(const core::Tick&)> onTickCallback_;
+    std::function<void()> onQuitCallback_;
 };
 
 } // namespace network

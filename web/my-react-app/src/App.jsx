@@ -405,22 +405,6 @@ function App() {
         </footer>
       </main>
 
-      {/* Right Panel */}
-      <aside className="w-72 bg-slate-950/30 border-l border-slate-700/50 p-4 hidden xl:block">
-        <h3 className="text-sm font-semibold text-slate-300 mb-4">Activity Log</h3>
-        <div className="space-y-2 h-full overflow-y-auto">
-          {logs.map((log, index) => (
-            <div key={index} className="text-xs">
-              <span className="text-slate-500">[{log.time}]</span>
-              <span className="text-cyan-400 ml-1">{log.message}</span>
-            </div>
-          ))}
-          {logs.length === 0 && (
-            <p className="text-slate-600 text-sm italic">Waiting for activity...</p>
-          )}
-        </div>
-      </aside>
-
       {/* Alert Panel Modal */}
       <AlertPanel 
         isOpen={showAlertPanel}
@@ -432,6 +416,7 @@ function App() {
       <Settings
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
+        logs={logs}
       />
 
       {/* Alert Notifications */}

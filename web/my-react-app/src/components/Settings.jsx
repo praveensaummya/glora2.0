@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react';
 import backendWS from '../utils/BackendWebSocket';
 
-export default function Settings({ isOpen, onClose }) {
+export default function Settings({ isOpen, onClose, logs = [] }) {
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [useTestnet, setUseTestnet] = useState(false);
@@ -214,6 +214,21 @@ export default function Settings({ isOpen, onClose }) {
             <li>Never transmitted to any server except Binance</li>
           </ul>
         </div>
+
+        {/* Activity Log */}
+        {logs.length > 0 && (
+          <div className="mt-4">
+            <h4 className="text-sm font-semibold text-white mb-2">Activity Log</h4>
+            <div className="bg-gray-900 rounded p-3 max-h-48 overflow-y-auto">
+              {logs.map((log, index) => (
+                <div key={index} className="text-xs">
+                  <span className="text-slate-500">[{log.time}]</span>
+                  <span className="text-cyan-400 ml-1">{log.message}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

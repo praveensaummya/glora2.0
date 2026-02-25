@@ -105,17 +105,26 @@ void DataManager::detectAndFillGaps() {
     if (!gaps.empty()) {
       std::cout << "Found " << gaps.size() << " gaps in data" << std::endl;
       for (const auto& gap : gaps) {
-        std::cout << "Gap: " << gap.startTime << " - " << gap.endTime << std::endl;
+        // Only fill gaps larger than 60 seconds - smaller gaps will be filled by live data
+        uint64_t gapSize = gap.endTime - gap.startTime;
+        if (gapSize < 60000) {
+          std::cout << "Skipping small gap (" << gapSize << "ms < 60s), live data will fill it" << std::endl;
+          continue;
+        }
+        std::cout << "Gap: " << gap.startTime << " - " << gap.endTime << " (" << gapSize << "ms)" << std::endl;
         fetchMissingData(gap.startTime, gap.endTime);
       }
     } else {
       std::cout << "No gaps found in data" << std::endl;
     }
     
-    // Fetch data after latest known time (gap filling for live data)
-    if (latestTime.value() < now - 60000) { // More than 1 minute ago
-      std::cout << "Fetching latest missing data..." << std::endl;
+    // Only fetch data after latest known time if gap is more than 5 minutes
+    // Otherwise rely on live data stream
+    if (latestTime.value() < now - 300000) { // More than 5 minutes ago
+      std::cout << "Fetching latest missing data (gap > 5 min)..." << std::endl;
       fetchMissingData(latestTime.value(), now);
+    } else {
+      std::cout << "Data is recent enough, relying on live data stream" << std::endl;
     }
   }
   

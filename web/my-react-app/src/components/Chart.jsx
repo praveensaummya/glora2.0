@@ -341,14 +341,14 @@ export default function Chart({
     if (candles && candles.length > 0) {
       // Use real data from IPC
       candleData = candles.map(c => ({
-        time: c.time,
+        time: Math.floor(c.time / 1000), // Convert ms to seconds for lightweight-charts
         open: c.open,
         high: c.high,
         low: c.low,
         close: c.close,
       }))
       volumeData = candles.map(c => ({
-        time: c.time,
+        time: Math.floor(c.time / 1000),
         value: c.volume || 0,
         color: c.close >= c.open ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
       }))
@@ -381,7 +381,7 @@ export default function Chart({
     
     // Update chart with latest candle from IPC
     candlestickSeriesRef.current.update({
-      time: latestCandle.time,
+      time: Math.floor(latestCandle.time / 1000), // Convert ms to seconds
       open: latestCandle.open,
       high: latestCandle.high,
       low: latestCandle.low,

@@ -2,6 +2,8 @@
 #include <thread>
 #include <chrono>
 #include <memory>
+#include <atomic>
+#include <csignal>
 
 #include "core/DataModels.h"
 #include "core/ThreadSafeQueue.h"
@@ -104,6 +106,24 @@ int main(int argc, char *argv[]) {
         });
       });
 
+  // Set up data update callback to broadcast candle updates
+  dataManager->setOnDataUpdateCallback([&apiHandler, &settings, &dataManager]() {
+    // Get latest candles and broadcast to frontend
+    const auto& candles = dataManager->getCandles(settings.defaultSymbol);
+    if (!candles.empty()) {
+      const auto& latestCandle = candles.back();
+      nlohmann::json candleMsg = nlohmann::json::object();
+      candleMsg["type"] = "candle";
+      candleMsg["symbol"] = settings.defaultSymbol;
+      candleMsg["time"] = latestCandle.start_time_ms;
+      candleMsg["open"] = latestCandle.open;
+      candleMsg["high"] = latestCandle.high;
+      candleMsg["low"] = latestCandle.low;
+      candleMsg["close"] = latestCandle.close;
+      apiHandler->broadcast(candleMsg);
+    }
+  });
+
   // 10. Start Network Thread
   std::thread networkThread([&]() {
     binanceClient->connectAndRun();
@@ -138,11 +158,35 @@ int main(int argc, char *argv[]) {
   });
 
   std::cout << "Application running. Frontend should connect to ws://localhost:8080" << std::endl;
+  std::cout << "Press 'Q' or 'q' to quit" << std::endl;
   std::cout << "API endpoints available:" << std::endl;
   std::cout << "  - getHistory: { type: 'getHistory', symbol: 'BTCUSDT', days: 7 }" << std::endl;
   std::cout << "  - getFootprint: { type: 'getFootprint', symbol: 'BTCUSDT', candleTime: <timestamp> }" << std::endl;
   std::cout << "  - subscribe: { type: 'subscribe', symbol: 'BTCUSDT' }" << std::endl;
   std::cout << "  - setConfig: { type: 'setConfig', days: 5 }" << std::endl;
+  std::cout << "  - quit: { type: 'quit' } (or press Q in console)" << std::endl;
+
+  // Add quit message handler to API Handler
+  std::atomic<bool> quitRequested(false);
+  apiHandler->setOnQuitCallback([&quitRequested]() {
+    std::cout << "[Main] Quit requested via API" << std::endl;
+    quitRequested = true;
+  });
+
+  // Console input listener thread for 'q' or 'quit' command
+  std::thread consoleInputThread([&quitRequested]() {
+    std::string input;
+    while (!quitRequested.load()) {
+      if (std::getline(std::cin, input)) {
+        if (input == "q" || input == "Q" || input == "quit" || input == "QUIT") {
+          std::cout << "[Main] Quit requested via console" << std::endl;
+          quitRequested = true;
+          break;
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  });
 
   // Run UI (or just wait for frontend connections)
   mainWindow.run();
