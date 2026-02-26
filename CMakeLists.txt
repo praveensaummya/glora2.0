@@ -144,16 +144,41 @@ else()
   message(STATUS "Using CEF for WebView (platform-independent)")
 endif()
 
-# Configure web resources path
-set(WEB_RESOURCES_DIR "${CMAKE_SOURCE_DIR}/web/my-react-app/dist")
-if(EXISTS ${WEB_RESOURCES_DIR})
-  message(STATUS "Web resources found at: ${WEB_RESOURCES_DIR}")
-  # Copy web resources to build directory
-  add_custom_command(TARGET GloraChart POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${WEB_RESOURCES_DIR}
-    $<TARGET_FILE_DIR:GloraChart>/web
+# Web resources - Build SolidJS frontend with Vite
+set(WEB_RESOURCES_DIR "${CMAKE_SOURCE_DIR}/web")
+set(WEB_DIST_DIR "${CMAKE_SOURCE_DIR}/web/dist")
+
+# Check if npm is available and build the frontend
+find_program(NPM_EXECUTABLE npm)
+if(NPM_EXECUTABLE AND EXISTS "${WEB_RESOURCES_DIR}/package.json")
+  message(STATUS "Building SolidJS frontend...")
+  execute_process(
+    COMMAND ${NPM_EXECUTABLE} install
+    WORKING_DIRECTORY ${WEB_RESOURCES_DIR}
+    RESULT_VARIABLE npm_install_result
   )
+  
+  if(npm_install_result EQUAL 0)
+    execute_process(
+      COMMAND ${NPM_EXECUTABLE} run build
+      WORKING_DIRECTORY ${WEB_RESOURCES_DIR}
+      RESULT_VARIABLE npm_build_result
+    )
+    
+    if(npm_build_result EQUAL 0 AND EXISTS "${WEB_DIST_DIR}")
+      message(STATUS "Frontend built successfully")
+      # Copy web resources to build directory
+      add_custom_command(TARGET GloraChart POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${WEB_DIST_DIR}
+        $<TARGET_FILE_DIR:GloraChart>/web
+      )
+    else()
+      message(WARNING "Frontend build failed, using placeholder")
+    endif()
+  else()
+    message(WARNING "npm install failed")
+  endif()
 else()
-  message(WARNING "Web resources directory not found at: ${WEB_RESOURCES_DIR}")
+  message(STATUS "npm not found or package.json missing - frontend will not be built")
 endif()

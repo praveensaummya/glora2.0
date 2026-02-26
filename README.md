@@ -30,7 +30,7 @@ The application follows a multi-threaded architecture to achieve low latency:
 │  Network Thread │────▶│ Processing     │────▶│ Render/UI      │
 │  (WebSocket)    │     │ Thread          │     │ Thread          │
 └─────────────────┘     │ (Lock-free Q)   │     │ (OpenGL/ImGui)  │
-                       └─────────────────┘     └─────────────────┘
+                        └─────────────────┘     └─────────────────┘
 ```
 
 ### Core Components
@@ -41,6 +41,28 @@ The application follows a multi-threaded architecture to achieve low latency:
 | [`src/core/`](src/core/) | Data models, threading, database, and utilities |
 | [`src/render/`](src/render/) | Chart rendering engine with OpenGL |
 | [`src/settings/`](src/settings/) | User settings and API configuration UI |
+
+## Frontend Architecture (Under Reconstruction)
+
+> ⚠️ **The React frontend has been removed as we transition to a new high-performance architecture.**
+
+The frontend is being rebuilt with a modern stack optimized for trading applications:
+
+| Component | Technology | Rationale |
+|-----------|------------|-----------|
+| **UI Framework** | SolidJS or Svelte 5 | Fine-grained reactivity, no Virtual DOM overhead |
+| **Charting Engine** | SciChart / WebGL / WebGPU | Millions of data points at 60 FPS |
+| **Communication** | WebSockets + FlatBuffers | Zero-copy deserialization for HF data |
+| **Computations** | Wasm (Rust/C++) | Near-native speed for indicators |
+| **Parallelism** | OffscreenCanvas | Render off main thread |
+
+### Backend Communication
+
+The C++ backend exposes data via:
+- **WebSocket Server**: `ws://localhost:8080` - Real-time market data streaming
+- **WebView IPC**: When `USE_WEBVIEW=1` environment variable is set
+
+See [`schema/market_data.fbs`](schema/market_data.fbs) for FlatBuffers schema.
 
 ## Data Storage
 
@@ -165,6 +187,8 @@ glora2.0-1/
 │       ├── MainWindow.h/cpp # Main application window
 │       ├── ChartRenderer.h/cpp
 │       └── Camera.h
+├── web/                     # Frontend (under reconstruction)
+│   └── index.html          # Placeholder for new frontend
 └── third_party/             # Dependencies (managed via CMake FetchContent)
 ```
 
