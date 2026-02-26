@@ -156,22 +156,18 @@ void ApiHandler::handleGetHistory(const json& message) {
                 interval,
                 startTime,
                 endTime,
-                [this, symbol, message](const std::vector<core::Candle>& fetchedCandles) {
+                [this, symbol, message, interval](const std::vector<core::Candle>& fetchedCandles) {
+                    std::cout << "[ApiHandler] Fetched " << fetchedCandles.size() 
+                              << " candles for interval " << interval << " from Binance" << std::endl;
                     if (!fetchedCandles.empty() && database_) {
                         database_->insertCandles(symbol, fetchedCandles);
                         std::cout << "[ApiHandler] Saved " << fetchedCandles.size() 
                                   << " candles to database" << std::endl;
                     }
-                    // Fetch complete - now send response with fresh data
-                    std::vector<core::Candle> updatedCandles;
-                    if (database_) {
-                        updatedCandles = database_->getCandles(symbol, 
-                            static_cast<uint64_t>(message.value("days", 7)) * 24 * 60 * 60 * 1000,
-                            std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::system_clock::now().time_since_epoch()
-                            ).count());
-                    }
-                    auto response = buildHistoryResponse(updatedCandles);
+                    // Use the fetched candles directly instead of re-querying database
+                    // (database doesn't filter by interval, so re-querying would return wrong data)
+                    auto response = buildHistoryResponse(fetchedCandles);
+                    response["interval"] = interval;
                     response["requestId"] = getRequestId(message);
                     broadcast(response);
                 }
