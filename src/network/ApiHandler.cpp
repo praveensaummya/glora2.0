@@ -122,18 +122,32 @@ void ApiHandler::handleGetHistory(const json& message) {
     
     std::cout << "[ApiHandler] Fetching history for " << symbol 
               << " from " << startTime << " to " << endTime 
-              << " (days: " << days << ")" << std::endl;
+              << " (interval: " << interval << ", days: " << days << ")" << std::endl;
+    
+    // Check if interval changed
+    bool intervalChanged = (interval != currentInterval_);
+    
+    // Check if we need to fetch from API (no data, or interval changed)
+    bool needsFetch = false;
     
     // Fetch data from database first
     std::vector<core::Candle> candles;
-    if (database_) {
+    if (database_ && !intervalChanged) {
         candles = database_->getCandles(symbol, startTime, endTime);
         std::cout << "[ApiHandler] Found " << candles.size() << " candles in database" << std::endl;
     }
     
-    // If no data or insufficient data, fetch from API
-    if (candles.empty() || 
+    // If interval changed or no data/insufficient data, fetch from API
+    if (intervalChanged) {
+        std::cout << "[ApiHandler] Interval changed from " << currentInterval_ << " to " << interval << ", fetching from API" << std::endl;
+        currentInterval_ = interval;
+        needsFetch = true;
+    } else if (candles.empty() || 
         (candles.front().start_time_ms > startTime + 60000)) {
+        needsFetch = true;
+    }
+    
+    if (needsFetch) {
         // Missing data at the beginning, fetch from API
         if (binanceClient_) {
             std::cout << "[ApiHandler] Fetching missing data from Binance..." << std::endl;

@@ -104,6 +104,7 @@ private:
     // State
     bool isInitialized_ = false;
     std::string currentSymbol_;
+    std::string currentInterval_;
     std::function<void(const core::Tick&)> onTickCallback_;
     std::function<void()> onQuitCallback_;
 };

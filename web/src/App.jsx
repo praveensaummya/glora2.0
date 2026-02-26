@@ -139,6 +139,28 @@ function App() {
         }
         break;
         
+      case 'candle':
+        // Handle real-time candle update
+        if (msg.time && msg.open !== undefined) {
+          const timeSeconds = Math.floor((msg.time || msg.t) / 1000);
+          const candle = {
+            time: timeSeconds,
+            open: parseFloat(msg.open || msg.o),
+            high: parseFloat(msg.high || msg.h),
+            low: parseFloat(msg.low || msg.l),
+            close: parseFloat(msg.close || msg.c),
+          };
+          if (candleSeries) candleSeries.update(candle);
+          
+          const vol = {
+            time: timeSeconds,
+            value: parseFloat(msg.volume || msg.v || 0),
+            color: parseFloat(msg.close || msg.c) >= parseFloat(msg.open || msg.o) ? 'rgba(8, 153, 129, 0.5)' : 'rgba(242, 54, 69, 0.5)',
+          };
+          if (volumeSeries) volumeSeries.update(vol);
+        }
+        break;
+        
       case 'subscribed':
         setStatusMessage('Subscribed to ' + msg.symbol);
         break;
