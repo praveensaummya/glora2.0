@@ -268,6 +268,7 @@ void BinanceClient::fetchKlines(const std::string& symbol, const std::string& in
      << "symbol=" << symbol 
      << "&interval=" << binanceInterval
      << "&startTime=" << startTime
+     << "&endTime=" << endTime
      << "&limit=1000";
   std::string queryStr = ss.str();
   

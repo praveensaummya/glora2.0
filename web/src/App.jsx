@@ -299,7 +299,7 @@ function App() {
         {/* Sidebar */}
         <aside style={{ width: '60px', background: '#1a1d29', 'border-right': '1px solid #2a2e39', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', padding: '8px 0', gap: '8px' }}>
           <button 
-            onClick={() => setShowOrderBook(!showOrderBook())} 
+            onClick={() => { setShowOrderBook(!showOrderBook()); setTimeout(() => chart && chartContainer && chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight }), 50); }} 
             style={{ 
               width: '40px', 
               height: '40px', 
@@ -314,7 +314,7 @@ function App() {
             📊
           </button>
           <button 
-            onClick={() => setShowTradeHistory(!showTradeHistory())} 
+            onClick={() => { setShowTradeHistory(!showTradeHistory()); setTimeout(() => chart && chartContainer && chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight }), 50); }} 
             style={{ 
               width: '40px', 
               height: '40px', 
