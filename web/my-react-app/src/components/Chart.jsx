@@ -31,6 +31,9 @@ export default function Chart({
   const isLoading = !candles || candles.length === 0
   const hasError = !!error
 
+  // Debug: log when data changes
+  console.log('[Chart] candles:', candles?.length, 'isLoading:', isLoading, 'loadingProgress:', loadingProgress);
+
   // Theme colors
   const isDark = theme === 'dark'
   const backgroundColor = isDark ? '#0f172a' : '#ffffff'

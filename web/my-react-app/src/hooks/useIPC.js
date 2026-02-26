@@ -250,6 +250,7 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
         setError(message.errorMessage);
       } else if (message.type === 'history') {
         // Received historical data
+        console.log('[IPC] Received history with', message.candles?.length, 'candles');
         const historicalCandles = message.candles.map(c => ({
           time: c.time,
           open: c.open,
@@ -313,7 +314,7 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
     
     messageListeners.add(handleMessage);
     return () => messageListeners.delete(handleMessage);
-  }, []);
+  }, [symbol, interval]);
 
   /**
    * Request historical data with caching
@@ -439,20 +440,31 @@ export function useMarketData(symbol = 'BTCUSDT', interval = '1m') {
   }, [requestHistory]);
 
   // Request historical data on mount or when symbol/interval changes
+  // Using timeout to ensure isConnected is set before fetching
   useEffect(() => {
-    if (isConnected && symbol && interval) {
-      // Request 7 days of history by default
-      requestHistory(7, 500);
-      // Then subscribe for live updates
-      subscribe();
-    }
+    let mounted = true;
+    
+    const fetchData = () => {
+      if (isConnected && symbol && interval && mounted) {
+        // Request 7 days of history by default
+        requestHistory(7, 500);
+        // Then subscribe for live updates
+        subscribe();
+      }
+    };
+    
+    // Small delay to ensure isConnected is set
+    const timer = setTimeout(fetchData, 150);
     
     return () => {
+      mounted = false;
+      clearTimeout(timer);
       if (isSubscribed) {
         unsubscribe();
       }
     };
-  }, [isConnected, symbol, interval, requestHistory, subscribe, unsubscribe, isSubscribed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, symbol, interval]);
 
   return {
     candles,
@@ -562,7 +574,7 @@ export function useBinanceWebSocket(symbol = 'BTCUSDT', interval = '1m', options
       ws.disconnect();
       wsRef.current = null;
     };
-  }, [symbol, interval]);
+  }, [symbol, interval, options]);
 
   // Handle kline (candle) updates
   useEffect(() => {
