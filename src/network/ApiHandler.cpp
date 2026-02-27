@@ -73,6 +73,8 @@ void ApiHandler::handleMessage(const std::string& messageStr) {
             handleLoadCredentials(message);
         } else if (type == "deleteCredentials") {
             handleDeleteCredentials(message);
+        } else if (type == "getSmartDOM") {
+            handleGetSmartDOM(message);
         } else if (type == "quit") {
             std::cout << "[ApiHandler] Quit requested" << std::endl;
             // Signal shutdown - we'll handle this via callback
@@ -652,6 +654,52 @@ void ApiHandler::handleDeleteCredentials(const json& message) {
         response["requestId"] = getRequestId(message);
         broadcast(response);
     }
+}
+
+void ApiHandler::handleGetSmartDOM(const json& message) {
+    std::string symbol = message.value("symbol", currentSymbol_);
+    int depth = message.value("depth", 25);
+    
+    std::cout << "[ApiHandler] Getting Smart DOM for " << symbol << " with depth " << depth << std::endl;
+    
+    if (!dataManager_) {
+        auto response = buildErrorResponse("DataManager not available");
+        broadcast(response);
+        return;
+    }
+    
+    // Get Smart DOM data from DataManager
+    auto domData = dataManager_->getSmartDOM(symbol, depth);
+    double poc = dataManager_->getPointOfControl(symbol);
+    
+    // Build response
+    json response = {
+        {"type", "smartDOM"},
+        {"symbol", symbol},
+        {"poc", poc},
+        {"count", domData.size()}
+    };
+    
+    json buckets = json::array();
+    for (const auto& bucket : domData) {
+        // Check for diagonal imbalances
+        bool hasImbalance = dataManager_->hasDiagonalImbalance(symbol, bucket.price, 0.01, 3.0);
+        
+        json b = {
+            {"price", bucket.price},
+            {"restingBid", bucket.restingBidQty},
+            {"restingAsk", bucket.restingAskQty},
+            {"aggBuy", bucket.aggressiveBuyVol},
+            {"aggSell", bucket.aggressiveSellVol},
+            {"delta", bucket.getDelta()},
+            {"imbalance", hasImbalance}
+        };
+        buckets.push_back(b);
+    }
+    
+    response["buckets"] = buckets;
+    response["requestId"] = getRequestId(message);
+    broadcast(response);
 }
 
 } // namespace network

@@ -566,5 +566,143 @@ std::vector<Candle> DataManager::aggregateToTimeframe(const std::string& symbol,
   return aggregated;
 }
 
+// === Smart DOM Implementation ===
+
+void DataManager::updateOrderBook(const std::string& symbol, const std::vector<std::pair<double, double>>& bids, 
+                                   const std::vector<std::pair<double, double>>& asks) {
+  std::lock_guard<std::mutex> lock(smartDOMMutex_);
+  
+  auto& smartDOM = smartDOMBySymbol_[symbol];
+  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()
+  ).count();
+  
+  // Update bids (resting buy orders)
+  for (const auto& [price, qty] : bids) {
+    auto& bucket = smartDOM[price];
+    bucket.price = price;
+    bucket.restingBidQty = qty;
+    bucket.lastUpdateTime = now;
+  }
+  
+  // Update asks (resting sell orders)
+  for (const auto& [price, qty] : asks) {
+    auto& bucket = smartDOM[price];
+    bucket.price = price;
+    bucket.restingAskQty = qty;
+    bucket.lastUpdateTime = now;
+  }
+}
+
+void DataManager::processTradeForSmartDOM(const std::string& symbol, const Tick& tick) {
+  std::lock_guard<std::mutex> lock(smartDOMMutex_);
+  
+  auto& smartDOM = smartDOMBySymbol_[symbol];
+  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()
+  ).count();
+  
+  // Find or create bucket for this price
+  auto& bucket = smartDOM[tick.price];
+  bucket.price = tick.price;
+  bucket.lastUpdateTime = now;
+  
+  // Track aggressive volume based on trade direction
+  if (tick.is_buyer_maker) {
+    // Aggressor was seller - hit the bid (passive buy)
+    bucket.aggressiveSellVol += tick.quantity;
+  } else {
+    // Aggressor was buyer - lifted the ask (aggressive buy)
+    bucket.aggressiveBuyVol += tick.quantity;
+  }
+}
+
+std::vector<PriceBucket> DataManager::getSmartDOM(const std::string& symbol, int depth) const {
+  std::lock_guard<std::mutex> lock(smartDOMMutex_);
+  
+  std::vector<PriceBucket> result;
+  
+  auto it = smartDOMBySymbol_.find(symbol);
+  if (it == smartDOMBySymbol_.end()) {
+    return result;
+  }
+  
+  const auto& smartDOM = it->second;
+  
+  // Get top N levels from both sides
+  int count = 0;
+  for (const auto& [price, bucket] : smartDOM) {
+    if (bucket.restingBidQty > 0 || bucket.restingAskQty > 0 || 
+        bucket.aggressiveBuyVol > 0 || bucket.aggressiveSellVol > 0) {
+      result.push_back(bucket);
+      count++;
+      if (count >= depth * 2) break;  // Get enough for both sides
+    }
+  }
+  
+  return result;
+}
+
+bool DataManager::hasDiagonalImbalance(const std::string& symbol, double price, double tickSize, double ratio) const {
+  std::lock_guard<std::mutex> lock(smartDOMMutex_);
+  
+  auto it = smartDOMBySymbol_.find(symbol);
+  if (it == smartDOMBySymbol_.end()) return false;
+  
+  const auto& smartDOM = it->second;
+  
+  // Find current price level and level below
+  auto currentIt = smartDOM.find(price);
+  auto belowIt = smartDOM.find(price - tickSize);
+  
+  if (currentIt == smartDOM.end() || belowIt == smartDOM.end()) return false;
+  
+  const auto& current = currentIt->second;
+  const auto& below = belowIt->second;
+  
+  // Diagonal imbalance: aggressive buy volume at price P >= ratio * aggressive sell volume at P-tickSize
+  return current.aggressiveBuyVol >= (ratio * below.aggressiveSellVol);
+}
+
+double DataManager::getPointOfControl(const std::string& symbol) const {
+  std::lock_guard<std::mutex> lock(smartDOMMutex_);
+  
+  auto it = smartDOMBySymbol_.find(symbol);
+  if (it == smartDOMBySymbol_.end()) return 0.0;
+  
+  const auto& smartDOM = it->second;
+  double maxVolume = 0.0;
+  double pocPrice = 0.0;
+  
+  for (const auto& [price, bucket] : smartDOM) {
+    double totalVol = bucket.getTotalBidVol() + bucket.getTotalAskVol();
+    if (totalVol > maxVolume) {
+      maxVolume = totalVol;
+      pocPrice = price;
+    }
+  }
+  
+  return pocPrice;
+}
+
+double DataManager::getVolumeImbalance(const std::string& symbol, double price) const {
+  std::lock_guard<std::mutex> lock(smartDOMMutex_);
+  
+  auto it = smartDOMBySymbol_.find(symbol);
+  if (it == smartDOMBySymbol_.end()) return 0.0;
+  
+  const auto& smartDOM = it->second;
+  auto bucketIt = smartDOM.find(price);
+  
+  if (bucketIt == smartDOM.end()) return 0.0;
+  
+  const auto& bucket = bucketIt->second;
+  double totalVol = bucket.getTotalBidVol() + bucket.getTotalAskVol();
+  if (totalVol == 0) return 0.0;
+  
+  // Return imbalance as percentage (-1 to 1)
+  return bucket.getNetVolume() / totalVol;
+}
+
 } // namespace core
 } // namespace glora

@@ -59,6 +59,9 @@ public:
   // Subscribe to real-time aggTrade stream
   void subscribeAggTrades(const std::string &symbol, OnTickCallback callback);
 
+  // Subscribe to depth stream (order book updates)
+  void subscribeDepth(const std::string& symbol, OnDepthCallback callback);
+
   // Subscribe to miniTicker for all symbols (real-time price updates)
   void subscribeMiniTickers(OnTicksCallback callback);
 

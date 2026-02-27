@@ -81,6 +81,13 @@ function App() {
   const [isSearching, setIsSearching] = createSignal(false);
   const [historyLoaded, setHistoryLoaded] = createSignal(false);  // Track if history has been loaded
   const [pendingCandleUpdates, setPendingCandleUpdates] = createSignal([]);  // Buffer for live updates before history
+  
+  // === Smart DOM State ===
+  const [orderBookBids, setOrderBookBids] = createSignal([]);
+  const [orderBookAsks, setOrderBookAsks] = createSignal([]);
+  const [trades, setTrades] = createSignal([]);  // Recent trades for Smart DOM
+  const [smartDOMData, setSmartDOMData] = createSignal([]);  // Aggregated Smart DOM data
+  const [pocPrice, setPocPrice] = createSignal(0);  // Point of Control
 
   let chartContainer;
   let chart;
@@ -98,11 +105,13 @@ function App() {
   onMount(() => {
     initChart();
     connectWebSocket();
+    connectBinanceWS();  // Connect to Binance for Smart DOM
     initSymbolWorker();
   });
 
   onCleanup(() => {
     if (ws) ws.close();
+    if (binanceWs) binanceWs.close();  // Clean up Binance WebSocket
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (chart) chart.remove();
     // Flush pending batched updates
@@ -234,6 +243,153 @@ function App() {
     }
   }
 
+  // === Binance WebSocket for Smart DOM ===
+  let binanceWs;  // Separate WebSocket for Binance data
+  
+  function connectBinanceWS() {
+    if (binanceWs) binanceWs.close();
+    
+    const sym = symbol().toLowerCase();
+    binanceWs = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${sym}@depth20@100ms/${sym}@aggTrade`);
+    
+    binanceWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        const data = msg.data;
+        
+        if (data.e === 'depthUpdate') {
+          // Order book update
+          const bids = (data.b || []).map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) }));
+          const asks = (data.a || []).map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) }));
+          
+          batchUpdate(() => {
+            setOrderBookBids(bids);
+            setOrderBookAsks(asks);
+          });
+        } else if (data.e === 'aggTrade') {
+          // Aggregated trade - for Smart DOM
+          const trade = {
+            price: parseFloat(data.p),
+            qty: parseFloat(data.q),
+            time: data.T,
+            isBuyerMaker: data.m  // true = seller initiated (aggressive sell)
+          };
+          
+          batchUpdate(() => {
+            setTrades(prev => {
+              const updated = [trade, ...prev].slice(0, 100);  // Keep last 100 trades
+              return updated;
+            });
+            
+            // Update Smart DOM data
+            updateSmartDOM(trade);
+          });
+        }
+      } catch (e) {
+        console.error('[Binance WS] Parse error:', e);
+      }
+    };
+    
+    binanceWs.onerror = (e) => {
+      console.error('[Binance WS] Error:', e);
+    };
+    
+    binanceWs.onclose = () => {
+      console.log('[Binance WS] Disconnected, reconnecting...');
+      setTimeout(connectBinanceWS, 5000);
+    };
+  }
+  
+  // === Smart DOM Data Processing ===
+  // Map to track price buckets for Smart DOM
+  let priceBuckets = new Map();
+  
+  function updateSmartDOM(trade) {
+    const price = trade.price;
+    const qty = trade.qty;
+    const isBuy = !trade.isBuyerMaker;  // !m means buyer was aggressor
+    
+    // Round price to tick size (0.01 for BTCUSDT)
+    const tickSize = 0.01;
+    const roundedPrice = Math.round(price / tickSize) * tickSize;
+    
+    // Get or create bucket
+    let bucket = priceBuckets.get(roundedPrice);
+    if (!bucket) {
+      bucket = {
+        price: roundedPrice,
+        restingBid: 0,
+        restingAsk: 0,
+        aggBuy: 0,
+        aggSell: 0
+      };
+      priceBuckets.set(roundedPrice, bucket);
+    }
+    
+    // Update aggressive volume
+    if (isBuy) {
+      bucket.aggBuy += qty;
+    } else {
+      bucket.aggSell += qty;
+    }
+    
+    // Calculate delta
+    bucket.delta = bucket.aggBuy - bucket.aggSell;
+    
+    // Find POC (price with highest total volume)
+    let maxVol = 0;
+    let poc = 0;
+    for (const [p, b] of priceBuckets) {
+      const totalVol = b.restingBid + b.restingAsk + b.aggBuy + b.aggSell;
+      if (totalVol > maxVol) {
+        maxVol = totalVol;
+        poc = p;
+      }
+    }
+    setPocPrice(poc);
+    
+    // Convert to sorted array
+    const sortedPrices = [...priceBuckets.keys()].sort((a, b) => b - a);
+    const domData = sortedPrices.slice(0, 25).map(p => priceBuckets.get(p));
+    setSmartDOMData(domData);
+  }
+  
+  // Update order book resting quantities in Smart DOM
+  function updateRestingLiquidity() {
+    const bids = orderBookBids();
+    const asks = orderBookAsks();
+    const tickSize = 0.01;
+    
+    // Update bid resting
+    for (const b of bids) {
+      const price = Math.round(b.price / tickSize) * tickSize;
+      let bucket = priceBuckets.get(price);
+      if (!bucket) {
+        bucket = { price, restingBid: 0, restingAsk: 0, aggBuy: 0, aggSell: 0, delta: 0 };
+        priceBuckets.set(price, bucket);
+      }
+      bucket.restingBid = b.qty;
+    }
+    
+    // Update ask resting
+    for (const a of asks) {
+      const price = Math.round(a.price / tickSize) * tickSize;
+      let bucket = priceBuckets.get(price);
+      if (!bucket) {
+        bucket = { price, restingBid: 0, restingAsk: 0, aggBuy: 0, aggSell: 0, delta: 0 };
+        priceBuckets.set(price, bucket);
+      }
+      bucket.restingAsk = a.qty;
+    }
+  }
+  
+  // Listen for order book changes
+  createEffect(() => {
+    if (orderBookBids().length > 0 || orderBookAsks().length > 0) {
+      updateRestingLiquidity();
+    }
+  });
+  
   function connectWebSocket() {
     if (ws) ws.close();
     
@@ -853,29 +1009,55 @@ function App() {
           <div ref={chartContainer} style={{ flex: 1, position: 'relative' }} />
         </section>
 
-        {/* Order Book */}
+        {/* Smart DOM (Volume Depth of Market) */}
         <Show when={showOrderBook()}>
-          <div style={{ width: '280px', background: '#1a1d29', 'border-left': '1px solid #2a2e39', padding: '12px' }}>
-            <div style={{ 'font-weight': '600', 'font-size': '12px', 'margin-bottom': '12px' }}>Order Book</div>
-            <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', 'font-size': '11px', color: '#787b86', 'margin-bottom': '8px' }}>
-              <span>Price</span><span style={{ 'text-align': 'right' }}>Quantity</span><span style={{ 'text-align': 'right' }}>Total</span>
+          <div style={{ width: '320px', background: '#1a1d29', 'border-left': '1px solid #2a2e39', padding: '12px' }}>
+            <div style={{ 'font-weight': '600', 'font-size': '12px', 'margin-bottom': '12px' }}>
+              Smart DOM
+              <Show when={pocPrice() > 0}>
+                <span style={{ 'margin-left': '8px', 'font-size': '10px', color: '#787b86' }}>POC: {pocPrice().toFixed(2)}</span>
+              </Show>
             </div>
-            <For each={Array.from({ length: 10 }, (_, i) => i)}>{(i) => (
-              <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', padding: '4px 0', 'font-size': '11px' }}>
-                <span style={{ color: '#f23645' }}>{(45000 + i * 5).toFixed(2)}</span>
-                <span style={{ 'text-align': 'right' }}>{(Math.random() * 2).toFixed(4)}</span>
-                <span style={{ 'text-align': 'right', color: '#787b86' }}>{(Math.random() * 10).toFixed(4)}</span>
+            
+            {/* Header */}
+            <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr 1fr', 'font-size': '10px', color: '#787b86', 'margin-bottom': '8px' }}>
+              <span>Bid Vol</span><span style={{ 'text-align': 'center' }}>Price</span><span style={{ 'text-align': 'right' }}>Ask Vol</span><span style={{ 'text-align': 'right' }}>Δ</span>
+            </div>
+            
+            {/* Asks (Sells) - reversed to show highest at top */}
+            <For each={smartDOMData().filter(d => d.price > pocPrice()).slice(0, 10).reverse()}>{(row) => (
+              <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr 1fr', padding: '3px 0', 'font-size': '11px', 
+                background: row.delta < -0.5 ? 'rgba(242, 54, 69, 0.15)' : 'transparent' }}>
+                <span style={{ 'text-align': 'left', color: '#787b86' }}></span>
+                <span style={{ 'text-align': 'center', color: '#f23645', 'font-weight': row.price === pocPrice() ? '700' : '400' }}>
+                  {row.price.toFixed(2)}
+                </span>
+                <span style={{ 'text-align': 'right', color: '#f23645' }}>{row.restingAsk.toFixed(4)}</span>
+                <span style={{ 'text-align': 'right', color: row.delta < 0 ? '#f23645' : '#089981' }}>
+                  {row.delta.toFixed(2)}
+                </span>
               </div>
             )}</For>
-            <div style={{ padding: '8px 0', 'border-top': '1px solid #2a2e39', 'border-bottom': '1px solid #2a2e39', 'margin': '8px 0', display: 'flex', 'justify-content': 'space-between', 'font-size': '12px' }}>
+            
+            {/* POC Line */}
+            <div style={{ padding: '4px 0', 'border-top': '1px solid #2a2e39', 'border-bottom': '1px solid #2a2e39', 'margin': '4px 0', 
+              display: 'flex', 'justify-content': 'space-between', 'font-size': '11px', 'background': '#2962ff20' }}>
               <span style={{ color: '#787b86' }}>Spread</span>
-              <span>5.00 (0.01%)</span>
+              <span>{(smartDOMData()[0]?.price - smartDOMData().find(d => d.restingAsk > 0)?.price || 0).toFixed(2)}</span>
             </div>
-            <For each={Array.from({ length: 10 }, (_, i) => i)}>{(i) => (
-              <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', padding: '4px 0', 'font-size': '11px' }}>
-                <span style={{ color: '#089981' }}>{(45000 - i * 5).toFixed(2)}</span>
-                <span style={{ 'text-align': 'right' }}>{(Math.random() * 2).toFixed(4)}</span>
-                <span style={{ 'text-align': 'right', color: '#787b86' }}>{(Math.random() * 10).toFixed(4)}</span>
+            
+            {/* Bids (Buys) */}
+            <For each={smartDOMData().filter(d => d.price <= pocPrice()).slice(0, 10)}>{(row) => (
+              <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr 1fr', padding: '3px 0', 'font-size': '11px',
+                background: row.delta > 0.5 ? 'rgba(8, 153, 129, 0.15)' : 'transparent' }}>
+                <span style={{ 'text-align': 'left', color: '#089981' }}>{row.restingBid.toFixed(4)}</span>
+                <span style={{ 'text-align': 'center', color: '#089981', 'font-weight': row.price === pocPrice() ? '700' : '400' }}>
+                  {row.price.toFixed(2)}
+                </span>
+                <span style={{ 'text-align': 'right', color: '#787b86' }}></span>
+                <span style={{ 'text-align': 'right', color: row.delta > 0 ? '#089981' : '#f23645' }}>
+                  {row.delta.toFixed(2)}
+                </span>
               </div>
             )}</For>
           </div>

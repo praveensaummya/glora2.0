@@ -78,6 +78,7 @@ private:
     void handleGetFootprint(const json& message);
     void handleSubscribe(const json& message);
     void subscribeToLiveUpdates(const std::string& symbol, const std::string& interval);
+    void handleGetSmartDOM(const json& message);
     void handleSetConfig(const json& message);
     void handleGetStatus(const json& message);
     void handleGetTicks(const json& message);

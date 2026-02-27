@@ -98,6 +98,27 @@ public:
   // Get all base assets (for filtering)
   std::vector<std::string> getBaseAssets() const;
   
+  // === Smart DOM (Depth of Market) Management ===
+  
+  // Update order book from depth stream
+  void updateOrderBook(const std::string& symbol, const std::vector<std::pair<double, double>>& bids, 
+                       const std::vector<std::pair<double, double>>& asks);
+  
+  // Process trade for Smart DOM (tracks aggressive volume)
+  void processTradeForSmartDOM(const std::string& symbol, const Tick& tick);
+  
+  // Get Smart DOM data for frontend
+  std::vector<PriceBucket> getSmartDOM(const std::string& symbol, int depth = 25) const;
+  
+  // Check for diagonal imbalances
+  bool hasDiagonalImbalance(const std::string& symbol, double price, double tickSize, double ratio = 3.0) const;
+  
+  // Get Point of Control (price with highest volume)
+  double getPointOfControl(const std::string& symbol) const;
+  
+  // Get Volume Imbalance at a price level
+  double getVolumeImbalance(const std::string& symbol, double price) const;
+  
   // === Multi-timeframe candle aggregation ===
   // Aggregate 1m candles to higher timeframes (5m, 15m, 1h, 4h, 1D)
   std::vector<Candle> aggregateToTimeframe(const std::string& symbol, const std::string& interval) const;
@@ -115,6 +136,11 @@ private:
   
   // Cached candles
   std::map<std::string, std::vector<Candle>> candlesBySymbol_;
+  
+  // === Smart DOM (Depth of Market) Data ===
+  // Using flat_map for cache-friendly price lookups
+  std::map<std::string, flat_map<double, PriceBucket, std::greater<double>>> smartDOMBySymbol_;
+  mutable std::mutex smartDOMMutex_;
   mutable std::mutex dataMutex_;
   
   // Callbacks

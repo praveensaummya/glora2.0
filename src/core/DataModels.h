@@ -184,6 +184,21 @@ struct Candle {
   }
 };
 
+// Price bucket for Smart DOM - stores both resting and aggressive volume at each price level
+struct PriceBucket {
+    double price = 0.0;
+    double restingBidQty = 0.0;    // From order book (limit orders on bid side)
+    double restingAskQty = 0.0;    // From order book (limit orders on ask side)
+    double aggressiveBuyVol = 0.0; // Aggressive buys (trades where buyer made the take)
+    double aggressiveSellVol = 0.0;// Aggressive sells (trades where seller made the take)
+    uint64_t lastUpdateTime = 0;
+    
+    double getDelta() const { return aggressiveBuyVol - aggressiveSellVol; }
+    double getTotalBidVol() const { return restingBidQty + aggressiveBuyVol; }
+    double getTotalAskVol() const { return restingAskQty + aggressiveSellVol; }
+    double getNetVolume() const { return getTotalBidVol() - getTotalAskVol(); }
+};
+
 // Holds the historical and current series of candles for a symbol
 struct SymbolData {
   std::string symbol; // e.g. "BTCUSDT"
