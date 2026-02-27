@@ -220,6 +220,7 @@ void ApiHandler::handleSubscribe(const json& message) {
     std::cout << "[ApiHandler] Subscribing to " << symbol << " with interval " << interval << std::endl;
     
     // === STEP 1: Load and send historical data from database first ===
+    // We always load 1m candles and aggregate to the requested timeframe
     int days = (settings_.historyDuration == settings::HistoryDuration::CUSTOM) ? 
                settings_.customDays : 7;
     
@@ -229,44 +230,60 @@ void ApiHandler::handleSubscribe(const json& message) {
     uint64_t endTime = now;
     uint64_t startTime = now - (static_cast<uint64_t>(days) * 24 * 60 * 60 * 1000);
     
-    // Fetch historical candles from database
-    std::vector<core::Candle> candles;
+    // First, ensure we have 1m candles in the database
+    std::vector<core::Candle> candles1m;
     if (database_) {
-        candles = database_->getCandles(symbol, startTime, endTime);
-        std::cout << "[ApiHandler] Found " << candles.size() << " candles in database for " << symbol << std::endl;
+        candles1m = database_->getCandles(symbol, startTime, endTime);
+        std::cout << "[ApiHandler] Found " << candles1m.size() << " 1m candles in database for " << symbol << std::endl;
     }
     
-    // If no data in DB, fetch from API
-    if (candles.empty() && binanceClient_) {
-        std::cout << "[ApiHandler] No data in DB, fetching from Binance..." << std::endl;
+    // If no 1m data in DB, fetch from API and store as 1m
+    if (candles1m.empty() && binanceClient_) {
+        std::cout << "[ApiHandler] No 1m data in DB, fetching from Binance..." << std::endl;
         binanceClient_->fetchKlines(
             symbol,
-            interval,
+            "1m",  // Always fetch 1m
             startTime,
             endTime,
-            [this, symbol, interval, message](const std::vector<core::Candle>& fetchedCandles) {
-                std::cout << "[ApiHandler] Fetched " << fetchedCandles.size() << " candles from Binance" << std::endl;
+            [this, symbol, interval, message, startTime, endTime](const std::vector<core::Candle>& fetchedCandles) {
+                std::cout << "[ApiHandler] Fetched " << fetchedCandles.size() << " 1m candles from Binance" << std::endl;
                 
                 // Store fetched candles in database
                 if (!fetchedCandles.empty() && database_) {
                     database_->insertCandles(symbol, fetchedCandles);
-                    std::cout << "[ApiHandler] Saved " << fetchedCandles.size() << " candles to database" << std::endl;
+                    std::cout << "[ApiHandler] Saved " << fetchedCandles.size() << " 1m candles to database" << std::endl;
+                }
+                
+                // Get candles from DataManager (which now has the data)
+                std::vector<core::Candle> candles;
+                if (dataManager_) {
+                    candles = dataManager_->aggregateToTimeframe(symbol, interval);
                 }
                 
                 // Send history to frontend
-                auto response = buildHistoryResponse(fetchedCandles);
+                auto response = buildHistoryResponse(candles);
                 response["interval"] = interval;
                 response["requestId"] = getRequestId(message);
                 broadcast(response);
                 
-                // Now subscribe to live updates
-                subscribeToLiveUpdates(symbol, interval);
+                // Now subscribe to live updates (always 1m)
+                subscribeToLiveUpdates(symbol, "1m");
             }
         );
         return; // Will continue in callback
     }
     
-    // Send history from DB to frontend
+    // We have 1m candles - now aggregate to requested timeframe
+    std::vector<core::Candle> candles;
+    if (dataManager_) {
+        // First load the 1m candles into DataManager memory
+        // Then aggregate to the requested interval
+        candles = dataManager_->aggregateToTimeframe(symbol, interval);
+    }
+    
+    std::cout << "[ApiHandler] Sending " << candles.size() << " " << interval << " candles to frontend" << std::endl;
+    
+    // Send history from DB (aggregated) to frontend
     auto historyResponse = buildHistoryResponse(candles);
     historyResponse["interval"] = interval;
     historyResponse["requestId"] = getRequestId(message);

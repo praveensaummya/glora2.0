@@ -499,5 +499,72 @@ std::vector<std::string> DataManager::getBaseAssets() const {
   return result;
 }
 
+// Helper function to convert interval string to milliseconds
+static uint64_t intervalToMs(const std::string& interval) {
+  if (interval == "1m") return 60 * 1000;
+  if (interval == "5m") return 5 * 60 * 1000;
+  if (interval == "15m") return 15 * 60 * 1000;
+  if (interval == "1h") return 60 * 60 * 1000;
+  if (interval == "4h") return 4 * 60 * 60 * 1000;
+  if (interval == "1D") return 24 * 60 * 60 * 1000;
+  return 60 * 1000; // Default to 1m
+}
+
+std::vector<Candle> DataManager::aggregateToTimeframe(const std::string& symbol, const std::string& interval) const {
+  // If already 1m, just return the candles from memory
+  if (interval == "1m") {
+    return getCandles(symbol);
+  }
+  
+  uint64_t targetIntervalMs = intervalToMs(interval);
+  
+  // Get 1m candles from memory
+  const auto& sourceCandles = getCandles(symbol);
+  
+  if (sourceCandles.empty()) {
+    return {};
+  }
+  
+  std::map<uint64_t, std::vector<const Candle*>> candlesByBucket;
+  
+  // Group 1m candles into higher timeframe buckets
+  for (const auto& candle : sourceCandles) {
+    uint64_t bucketStart = (candle.start_time_ms / targetIntervalMs) * targetIntervalMs;
+    candlesByBucket[bucketStart].push_back(&candle);
+  }
+  
+  std::vector<Candle> aggregated;
+  
+  for (const auto& [bucketStart, bucketCandles] : candlesByBucket) {
+    if (bucketCandles.empty()) continue;
+    
+    Candle agg;
+    agg.start_time_ms = bucketStart;
+    agg.end_time_ms = bucketStart + targetIntervalMs;
+    
+    // Aggregate OHLCV from all candles in this bucket
+    bool first = true;
+    for (const auto* c : bucketCandles) {
+      if (first) {
+        agg.open = c->open;
+        agg.low = c->low;
+        first = false;
+      } else {
+        agg.low = std::min(agg.low, c->low);
+      }
+      agg.high = std::max(agg.high, c->high);
+      agg.close = c->close;  // Use last close
+      agg.volume += c->volume;
+    }
+    
+    aggregated.push_back(agg);
+  }
+  
+  std::cout << "[DataManager] Aggregated " << sourceCandles.size() << " 1m candles to " 
+            << aggregated.size() << " " << interval << " candles" << std::endl;
+  
+  return aggregated;
+}
+
 } // namespace core
 } // namespace glora

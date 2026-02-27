@@ -97,6 +97,10 @@ public:
   
   // Get all base assets (for filtering)
   std::vector<std::string> getBaseAssets() const;
+  
+  // === Multi-timeframe candle aggregation ===
+  // Aggregate 1m candles to higher timeframes (5m, 15m, 1h, 4h, 1D)
+  std::vector<Candle> aggregateToTimeframe(const std::string& symbol, const std::string& interval) const;
 
 private:
   void loadFromDatabase();
