@@ -82,10 +82,39 @@ bool Database::initialize(const std::string& dbPath) {
     );
   )";
   
+  const char* symbolsTable = R"(
+    CREATE TABLE IF NOT EXISTS symbols (
+      symbol TEXT PRIMARY KEY,
+      base_asset TEXT NOT NULL,
+      quote_asset TEXT NOT NULL,
+      status TEXT NOT NULL,
+      permissions TEXT NOT NULL,
+      min_price REAL DEFAULT 0,
+      max_price REAL DEFAULT 0,
+      tick_size REAL DEFAULT 0,
+      min_qty REAL DEFAULT 0,
+      max_qty REAL DEFAULT 0,
+      step_size REAL DEFAULT 0,
+      min_notional REAL DEFAULT 0,
+      last_price REAL DEFAULT 0,
+      price_change REAL DEFAULT 0,
+      price_change_percent REAL DEFAULT 0,
+      high_24h REAL DEFAULT 0,
+      low_24h REAL DEFAULT 0,
+      volume_24h REAL DEFAULT 0,
+      quote_volume_24h REAL DEFAULT 0,
+      last_update_time INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_symbols_quote_asset ON symbols(quote_asset);
+    CREATE INDEX IF NOT EXISTS idx_symbols_base_asset ON symbols(base_asset);
+    CREATE INDEX IF NOT EXISTS idx_symbols_volume ON symbols(quote_volume_24h DESC);
+  )";
+  
   execute(ticksTable);
   execute(candlesTable);
   execute(gapsTable);
   execute(userSettingsTable);
+  execute(symbolsTable);
   
   std::cout << "Database initialized: " << dbPath << std::endl;
   return true;
@@ -458,6 +487,276 @@ bool Database::hasApiCredentials() const {
   std::string apiKey, apiSecret;
   bool useTestnet;
   return getApiCredentials(apiKey, apiSecret, useTestnet) && !apiKey.empty();
+}
+
+// === Symbol Metadata Operations ===
+
+bool Database::insertOrUpdateSymbol(const core::Symbol& symbol) {
+  if (!db_) return false;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    INSERT OR REPLACE INTO symbols 
+    (symbol, base_asset, quote_asset, status, permissions, 
+     min_price, max_price, tick_size, min_qty, max_qty, step_size, min_notional,
+     last_update_time)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return false;
+  
+  sqlite3_bind_text(stmt, 1, symbol.symbol.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, symbol.baseAsset.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, symbol.quoteAsset.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, symbol.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 5, symbol.permissions.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 6, symbol.minPrice);
+  sqlite3_bind_double(stmt, 7, symbol.maxPrice);
+  sqlite3_bind_double(stmt, 8, symbol.tickSize);
+  sqlite3_bind_double(stmt, 9, symbol.minQty);
+  sqlite3_bind_double(stmt, 10, symbol.maxQty);
+  sqlite3_bind_double(stmt, 11, symbol.stepSize);
+  sqlite3_bind_double(stmt, 12, symbol.minNotional);
+  
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  
+  return rc == SQLITE_DONE;
+}
+
+bool Database::insertSymbols(const std::vector<core::Symbol>& symbols) {
+  if (symbols.empty() || !db_) return true;
+  
+  sqlite3_exec(reinterpret_cast<sqlite3*>(db_), "BEGIN TRANSACTION", nullptr, nullptr, nullptr);
+  
+  for (const auto& symbol : symbols) {
+    if (!insertOrUpdateSymbol(symbol)) {
+      sqlite3_exec(reinterpret_cast<sqlite3*>(db_), "COMMIT", nullptr, nullptr, nullptr);
+      return false;
+    }
+  }
+  
+  sqlite3_exec(reinterpret_cast<sqlite3*>(db_), "COMMIT", nullptr, nullptr, nullptr);
+  
+  std::cout << "[Database] Inserted " << symbols.size() << " symbols" << std::endl;
+  return true;
+}
+
+std::vector<core::Symbol> Database::getAllSymbols() const {
+  std::vector<core::Symbol> symbols;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    SELECT symbol, base_asset, quote_asset, status, permissions,
+           min_price, max_price, tick_size, min_qty, max_qty, step_size, min_notional,
+           last_price, price_change, price_change_percent, high_24h, low_24h, volume_24h, quote_volume_24h
+    FROM symbols
+    ORDER BY quote_volume_24h DESC
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return symbols;
+  
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    core::Symbol symbol;
+    symbol.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    symbol.baseAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    symbol.quoteAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    symbol.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    symbol.permissions = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+    symbol.minPrice = sqlite3_column_double(stmt, 5);
+    symbol.maxPrice = sqlite3_column_double(stmt, 6);
+    symbol.tickSize = sqlite3_column_double(stmt, 7);
+    symbol.minQty = sqlite3_column_double(stmt, 8);
+    symbol.maxQty = sqlite3_column_double(stmt, 9);
+    symbol.stepSize = sqlite3_column_double(stmt, 10);
+    symbol.minNotional = sqlite3_column_double(stmt, 11);
+    symbol.lastPrice = sqlite3_column_double(stmt, 12);
+    symbol.priceChange = sqlite3_column_double(stmt, 13);
+    symbol.priceChangePercent = sqlite3_column_double(stmt, 14);
+    symbol.high24h = sqlite3_column_double(stmt, 15);
+    symbol.low24h = sqlite3_column_double(stmt, 16);
+    symbol.volume24h = sqlite3_column_double(stmt, 17);
+    symbol.quoteVolume24h = sqlite3_column_double(stmt, 18);
+    symbols.push_back(symbol);
+  }
+  
+  sqlite3_finalize(stmt);
+  return symbols;
+}
+
+std::optional<core::Symbol> Database::getSymbol(const std::string& symbolName) const {
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    SELECT symbol, base_asset, quote_asset, status, permissions,
+           min_price, max_price, tick_size, min_qty, max_qty, step_size, min_notional,
+           last_price, price_change, price_change_percent, high_24h, low_24h, volume_24h, quote_volume_24h
+    FROM symbols
+    WHERE symbol = ?
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return std::nullopt;
+  
+  sqlite3_bind_text(stmt, 1, symbolName.c_str(), -1, SQLITE_TRANSIENT);
+  
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    core::Symbol symbol;
+    symbol.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    symbol.baseAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    symbol.quoteAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    symbol.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    symbol.permissions = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+    symbol.minPrice = sqlite3_column_double(stmt, 5);
+    symbol.maxPrice = sqlite3_column_double(stmt, 6);
+    symbol.tickSize = sqlite3_column_double(stmt, 7);
+    symbol.minQty = sqlite3_column_double(stmt, 8);
+    symbol.maxQty = sqlite3_column_double(stmt, 9);
+    symbol.stepSize = sqlite3_column_double(stmt, 10);
+    symbol.minNotional = sqlite3_column_double(stmt, 11);
+    symbol.lastPrice = sqlite3_column_double(stmt, 12);
+    symbol.priceChange = sqlite3_column_double(stmt, 13);
+    symbol.priceChangePercent = sqlite3_column_double(stmt, 14);
+    symbol.high24h = sqlite3_column_double(stmt, 15);
+    symbol.low24h = sqlite3_column_double(stmt, 16);
+    symbol.volume24h = sqlite3_column_double(stmt, 17);
+    symbol.quoteVolume24h = sqlite3_column_double(stmt, 18);
+    sqlite3_finalize(stmt);
+    return symbol;
+  }
+  
+  sqlite3_finalize(stmt);
+  return std::nullopt;
+}
+
+std::vector<core::Symbol> Database::getSymbolsByQuoteAsset(const std::string& quoteAsset) const {
+  std::vector<core::Symbol> symbols;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    SELECT symbol, base_asset, quote_asset, status, permissions,
+           min_price, max_price, tick_size, min_qty, max_qty, step_size, min_notional,
+           last_price, price_change, price_change_percent, high_24h, low_24h, volume_24h, quote_volume_24h
+    FROM symbols
+    WHERE quote_asset = ?
+    ORDER BY quote_volume_24h DESC
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return symbols;
+  
+  sqlite3_bind_text(stmt, 1, quoteAsset.c_str(), -1, SQLITE_TRANSIENT);
+  
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    core::Symbol symbol;
+    symbol.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    symbol.baseAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    symbol.quoteAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    symbol.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    symbol.permissions = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+    symbol.minPrice = sqlite3_column_double(stmt, 5);
+    symbol.maxPrice = sqlite3_column_double(stmt, 6);
+    symbol.tickSize = sqlite3_column_double(stmt, 7);
+    symbol.minQty = sqlite3_column_double(stmt, 8);
+    symbol.maxQty = sqlite3_column_double(stmt, 9);
+    symbol.stepSize = sqlite3_column_double(stmt, 10);
+    symbol.minNotional = sqlite3_column_double(stmt, 11);
+    symbol.lastPrice = sqlite3_column_double(stmt, 12);
+    symbol.priceChange = sqlite3_column_double(stmt, 13);
+    symbol.priceChangePercent = sqlite3_column_double(stmt, 14);
+    symbol.high24h = sqlite3_column_double(stmt, 15);
+    symbol.low24h = sqlite3_column_double(stmt, 16);
+    symbol.volume24h = sqlite3_column_double(stmt, 17);
+    symbol.quoteVolume24h = sqlite3_column_double(stmt, 18);
+    symbols.push_back(symbol);
+  }
+  
+  sqlite3_finalize(stmt);
+  return symbols;
+}
+
+std::vector<core::Symbol> Database::getSymbolsByBaseAsset(const std::string& baseAsset) const {
+  std::vector<core::Symbol> symbols;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    SELECT symbol, base_asset, quote_asset, status, permissions,
+           min_price, max_price, tick_size, min_qty, max_qty, step_size, min_notional,
+           last_price, price_change, price_change_percent, high_24h, low_24h, volume_24h, quote_volume_24h
+    FROM symbols
+    WHERE base_asset = ?
+    ORDER BY quote_volume_24h DESC
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return symbols;
+  
+  sqlite3_bind_text(stmt, 1, baseAsset.c_str(), -1, SQLITE_TRANSIENT);
+  
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    core::Symbol symbol;
+    symbol.symbol = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    symbol.baseAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    symbol.quoteAsset = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    symbol.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    symbol.permissions = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+    symbol.minPrice = sqlite3_column_double(stmt, 5);
+    symbol.maxPrice = sqlite3_column_double(stmt, 6);
+    symbol.tickSize = sqlite3_column_double(stmt, 7);
+    symbol.minQty = sqlite3_column_double(stmt, 8);
+    symbol.maxQty = sqlite3_column_double(stmt, 9);
+    symbol.stepSize = sqlite3_column_double(stmt, 10);
+    symbol.minNotional = sqlite3_column_double(stmt, 11);
+    symbol.lastPrice = sqlite3_column_double(stmt, 12);
+    symbol.priceChange = sqlite3_column_double(stmt, 13);
+    symbol.priceChangePercent = sqlite3_column_double(stmt, 14);
+    symbol.high24h = sqlite3_column_double(stmt, 15);
+    symbol.low24h = sqlite3_column_double(stmt, 16);
+    symbol.volume24h = sqlite3_column_double(stmt, 17);
+    symbol.quoteVolume24h = sqlite3_column_double(stmt, 18);
+    symbols.push_back(symbol);
+  }
+  
+  sqlite3_finalize(stmt);
+  return symbols;
+}
+
+bool Database::updateSymbolPrice(const std::string& symbolName, double price, double priceChange, 
+                                double priceChangePercent, double high24h, double low24h,
+                                double volume24h, double quoteVolume24h) {
+  if (!db_) return false;
+  
+  sqlite3_stmt* stmt;
+  const char* sql = R"(
+    UPDATE symbols SET 
+      last_price = ?,
+      price_change = ?,
+      price_change_percent = ?,
+      high_24h = ?,
+      low_24h = ?,
+      volume_24h = ?,
+      quote_volume_24h = ?,
+      last_update_time = strftime('%s', 'now')
+    WHERE symbol = ?
+  )";
+  
+  int rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) return false;
+  
+  sqlite3_bind_double(stmt, 1, price);
+  sqlite3_bind_double(stmt, 2, priceChange);
+  sqlite3_bind_double(stmt, 3, priceChangePercent);
+  sqlite3_bind_double(stmt, 4, high24h);
+  sqlite3_bind_double(stmt, 5, low24h);
+  sqlite3_bind_double(stmt, 6, volume24h);
+  sqlite3_bind_double(stmt, 7, quoteVolume24h);
+  sqlite3_bind_text(stmt, 8, symbolName.c_str(), -1, SQLITE_TRANSIENT);
+  
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  
+  return rc == SQLITE_DONE;
 }
 
 } // namespace database

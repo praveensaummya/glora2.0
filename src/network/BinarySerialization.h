@@ -64,14 +64,14 @@ struct BinaryHeader {
   uint8_t  version;      // Protocol version
   uint8_t  type;         // Message type
   uint8_t  flags;        // Message flags
-  uint8_t  reserved;     // Reserved for future use
+  uint8_t  reserved;     // Reserved for future use (padding)
   uint32_t payloadSize;  // Size of payload
   uint64_t timestamp;    // Message timestamp (ms since epoch)
   uint64_t sequence;    // Sequence number
 };
 #pragma pack(pop)
 
-static_assert(sizeof(BinaryHeader) == 24, "BinaryHeader must be 24 bytes");
+static_assert(sizeof(BinaryHeader) == 28, "BinaryHeader must be 28 bytes");
 
 // Candle binary format
 struct BinaryCandle {

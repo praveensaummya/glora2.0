@@ -960,7 +960,7 @@ void MainWindow::sendCandleToFrontend(const core::Candle& candle, const std::str
   }
 }
 
-// Subscribe to market data
+// Subscribe to market data using bootstrap: history first, then live stream
 void MainWindow::subscribeToMarketData(const std::string& symbol, const std::string& interval) {
   if (!pImpl->binanceClient) {
     return;
@@ -972,12 +972,66 @@ void MainWindow::subscribeToMarketData(const std::string& symbol, const std::str
   pImpl->currentTradingSymbol = symbol.empty() ? "BTCUSDT" : symbol;
   pImpl->currentInterval = interval.empty() ? "1m" : interval;
   
-  std::cout << "[IPC] Subscribing to " << pImpl->currentTradingSymbol 
-            << " @ " << pImpl->currentInterval << std::endl;
+  std::cout << "[IPC] Bootstrapping " << pImpl->currentTradingSymbol 
+            << " @ " << pImpl->currentInterval << " (history then live)" << std::endl;
   
-  // Set up tick callback to convert to candles
-  pImpl->binanceClient->subscribeAggTrades(
+  // Calculate time range for history (last 7 days)
+  uint64_t endTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  uint64_t startTime = endTime - (7 * 24 * 60 * 60 * 1000); // 7 days
+  
+  // Use bootstrap: fetch history first, then start live stream
+  pImpl->binanceClient->bootstrapHistoryThenStream(
     pImpl->currentTradingSymbol,
+    pImpl->currentInterval,
+    startTime,
+    endTime,
+    // History complete callback - send to frontend
+    [this](const std::vector<core::Candle>& candles) {
+      json response;
+      response["type"] = "history";
+      response["symbol"] = pImpl->currentTradingSymbol;
+      response["interval"] = pImpl->currentInterval;
+      
+      std::vector<json> candleArray;
+      for (const auto& c : candles) {
+        json candleJson;
+        candleJson["time"] = c.start_time_ms / 1000; // Convert to seconds
+        candleJson["open"] = c.open;
+        candleJson["high"] = c.high;
+        candleJson["low"] = c.low;
+        candleJson["close"] = c.close;
+        candleJson["volume"] = c.volume;
+        candleArray.push_back(candleJson);
+      }
+      response["candles"] = candleArray;
+      response["historyComplete"] = true; // Flag to indicate history is done
+      
+      // Send history to frontend
+      if (pImpl->webViewManager && pImpl->webViewManager->isReady()) {
+        pImpl->webViewManager->sendToFrontend(response.dump());
+      }
+      // Also broadcast via WebSocket
+      if (pImpl->wsServer && pImpl->wsServer->isRunning()) {
+        pImpl->wsServer->broadcast(response.dump());
+      }
+      
+      pImpl->isSubscribed = true;
+      std::cout << "[IPC] Sent " << candles.size() << " historical candles to frontend" << std::endl;
+      
+      // Send subscribed confirmation
+      json subResponse;
+      subResponse["type"] = "subscribed";
+      subResponse["symbol"] = pImpl->currentTradingSymbol;
+      subResponse["interval"] = pImpl->currentInterval;
+      if (pImpl->webViewManager && pImpl->webViewManager->isReady()) {
+        pImpl->webViewManager->sendToFrontend(subResponse.dump());
+      }
+      if (pImpl->wsServer && pImpl->wsServer->isRunning()) {
+        pImpl->wsServer->broadcast(subResponse.dump());
+      }
+    },
+    // Live tick callback - send to frontend
     [this](const core::Tick& tick) {
       // Convert tick to candle (simplified - in production, you'd aggregate properly)
       core::Candle candle;
@@ -992,17 +1046,6 @@ void MainWindow::subscribeToMarketData(const std::string& symbol, const std::str
       sendCandleToFrontend(candle, pImpl->currentTradingSymbol);
     }
   );
-  
-  // Start the WebSocket connection
-  pImpl->binanceClient->connectAndRun();
-  pImpl->isSubscribed = true;
-  
-  // Send confirmation to frontend
-  json response;
-  response["type"] = "subscribed";
-  response["symbol"] = pImpl->currentTradingSymbol;
-  response["interval"] = pImpl->currentInterval;
-  pImpl->webViewManager->sendToFrontend(response.dump());
 }
 
 // Unsubscribe from market data

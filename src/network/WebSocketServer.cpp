@@ -1,4 +1,5 @@
 #include "WebSocketServer.h"
+#include "BinarySerialization.h"
 #include <iostream>
 #include <algorithm>
 
@@ -127,6 +128,51 @@ void WebSocketServer::onDisconnection(int clientId, const ix::WebSocket& webSock
     std::lock_guard<std::mutex> lock(clientsMutex_);
     clients_.erase(std::remove(clients_.begin(), clients_.end(), clientId), clients_.end());
     std::cout << "[WebSocketServer] Client " << clientId << " disconnected. Total clients: " << clients_.size() << std::endl;
+}
+
+// --- Binary Serialization Methods ---
+
+void WebSocketServer::broadcastBinary(const std::vector<uint8_t>& data) {
+    if (!isRunning_ || !server_) {
+        return;
+    }
+    
+    auto clients = server_->getClients();
+    for (auto& client : clients) {
+        if (client) {
+            // Send binary message
+            client->sendBinary(data);
+        }
+    }
+    
+    // Update metrics
+    auto metrics = binarySerializer_.getMetrics();
+    metrics.totalBytesOut += data.size();
+}
+
+void WebSocketServer::broadcastCandle(uint64_t openTime, uint64_t closeTime,
+                                     double open, double high, double low, double close,
+                                     double volume, uint32_t trades, bool closed) {
+    auto binaryData = binarySerializer_.serializeCandle(
+        openTime, closeTime, open, high, low, close, volume, trades, closed
+    );
+    broadcastBinary(binaryData);
+    std::cout << "[WebSocketServer] Broadcast candle (binary): " << trades << " trades" << std::endl;
+}
+
+void WebSocketServer::broadcastTrade(int64_t tradeId, double price, double quantity,
+                                    uint64_t tradeTime, bool isBuyerMaker) {
+    auto binaryData = binarySerializer_.serializeTrade(
+        tradeId, price, quantity, tradeTime, isBuyerMaker
+    );
+    broadcastBinary(binaryData);
+}
+
+void WebSocketServer::broadcastOrderBook(uint64_t lastUpdateId,
+                                        const std::vector<std::pair<double, double>>& bids,
+                                        const std::vector<std::pair<double, double>>& asks) {
+    auto binaryData = binarySerializer_.serializeOrderBook(lastUpdateId, bids, asks);
+    broadcastBinary(binaryData);
 }
 
 } // namespace network

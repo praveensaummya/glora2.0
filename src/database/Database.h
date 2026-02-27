@@ -86,6 +86,31 @@ public:
   // Check if API credentials exist
   bool hasApiCredentials() const;
   
+  // === Symbol Metadata Operations ===
+  
+  // Insert or update symbol metadata
+  bool insertOrUpdateSymbol(const core::Symbol& symbol);
+  
+  // Insert multiple symbols (bulk)
+  bool insertSymbols(const std::vector<core::Symbol>& symbols);
+  
+  // Get all symbols
+  std::vector<core::Symbol> getAllSymbols() const;
+  
+  // Get symbol by name
+  std::optional<core::Symbol> getSymbol(const std::string& symbol) const;
+  
+  // Get symbols by quote asset (e.g., "USDT", "BUSD")
+  std::vector<core::Symbol> getSymbolsByQuoteAsset(const std::string& quoteAsset) const;
+  
+  // Get symbols by base asset (e.g., "BTC", "ETH")
+  std::vector<core::Symbol> getSymbolsByBaseAsset(const std::string& baseAsset) const;
+  
+  // Update symbol price (real-time)
+  bool updateSymbolPrice(const std::string& symbol, double price, double priceChange, 
+                        double priceChangePercent, double high24h, double low24h,
+                        double volume24h, double quoteVolume24h);
+  
   // Get database file path
   std::string getPath() const { return dbPath_; }
 

@@ -7,6 +7,7 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <nlohmann/json.hpp>
+#include "BinarySerialization.h"
 
 namespace glora {
 namespace network {
@@ -51,6 +52,34 @@ public:
      */
     void broadcast(const json& message);
     
+    // --- Binary Serialization Support ---
+    /**
+     * Broadcast binary market data using BinarySerialization
+     * More efficient than JSON for high-frequency data
+     * @param data Binary message data
+     */
+    void broadcastBinary(const std::vector<uint8_t>& data);
+    
+    /**
+     * Broadcast candle data as binary
+     */
+    void broadcastCandle(uint64_t openTime, uint64_t closeTime,
+                        double open, double high, double low, double close,
+                        double volume, uint32_t trades, bool closed);
+    
+    /**
+     * Broadcast trade data as binary
+     */
+    void broadcastTrade(int64_t tradeId, double price, double quantity,
+                       uint64_t tradeTime, bool isBuyerMaker);
+    
+    /**
+     * Broadcast order book as binary
+     */
+    void broadcastOrderBook(uint64_t lastUpdateId,
+                           const std::vector<std::pair<double, double>>& bids,
+                           const std::vector<std::pair<double, double>>& asks);
+    
     /**
      * Check if server is running
      * @return true if server is running
@@ -81,6 +110,9 @@ private:
     MessageCallback messageCallback_;
     bool isRunning_;
     int lastClientId_ = 0;
+    
+    // Binary serializer for efficient market data transmission
+    BinarySerializer binarySerializer_;
 };
 
 } // namespace network

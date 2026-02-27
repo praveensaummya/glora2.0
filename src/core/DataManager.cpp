@@ -307,5 +307,182 @@ void DataManager::refreshData() {
   refreshThread.join(); // Properly join the thread instead of detaching
 }
 
+// === Symbol Management ===
+
+void DataManager::loadSymbols() {
+  // First try to load from database
+  if (database_) {
+    auto dbSymbols = database_->getAllSymbols();
+    if (!dbSymbols.empty()) {
+      std::lock_guard<std::mutex> lock(symbolMutex_);
+      for (auto& sym : dbSymbols) {
+        symbols_[sym.symbol] = sym;
+        // Build secondary indices
+        symbolsByQuoteAsset_[sym.quoteAsset].push_back(sym.symbol);
+        symbolsByBaseAsset_[sym.baseAsset].push_back(sym.symbol);
+      }
+      std::cout << "[DataManager] Loaded " << symbols_.size() << " symbols from database" << std::endl;
+      return;
+    }
+  }
+  
+  // If database is empty, fetch from API
+  fetchExchangeInfoFromApi();
+}
+
+void DataManager::fetchExchangeInfoFromApi() {
+  if (!networkClient_) {
+    std::cerr << "[DataManager] No network client available for fetching exchange info" << std::endl;
+    return;
+  }
+  
+  std::cout << "[DataManager] Fetching exchange info from API..." << std::endl;
+  
+  networkClient_->fetchExchangeInfo([this](const std::vector<Symbol>& apiSymbols) {
+    if (!apiSymbols.empty()) {
+      // Store in database
+      if (database_) {
+        database_->insertSymbols(apiSymbols);
+      }
+      
+      // Update in-memory storage with flat_map
+      {
+        std::lock_guard<std::mutex> lock(symbolMutex_);
+        symbols_.clear();
+        symbolsByQuoteAsset_.clear();
+        symbolsByBaseAsset_.clear();
+        
+        for (const auto& sym : apiSymbols) {
+          symbols_[sym.symbol] = sym;
+          // Build secondary indices
+          symbolsByQuoteAsset_[sym.quoteAsset].push_back(sym.symbol);
+          symbolsByBaseAsset_[sym.baseAsset].push_back(sym.symbol);
+        }
+      }
+      
+      std::cout << "[DataManager] Loaded " << apiSymbols.size() << " symbols from API" << std::endl;
+      
+      if (onDataUpdate_) {
+        onDataUpdate_();
+      }
+    }
+  });
+}
+
+std::vector<Symbol> DataManager::getAllSymbols() const {
+  std::lock_guard<std::mutex> lock(symbolMutex_);
+  std::vector<Symbol> result;
+  for (const auto& pair : symbols_) {
+    result.push_back(pair.second);
+  }
+  // Sort by quote volume descending
+  std::sort(result.begin(), result.end(), [](const Symbol& a, const Symbol& b) {
+    return a.quoteVolume24h > b.quoteVolume24h;
+  });
+  return result;
+}
+
+const Symbol* DataManager::getSymbol(const std::string& symbolName) const {
+  std::lock_guard<std::mutex> lock(symbolMutex_);
+  auto it = symbols_.find(symbolName);
+  if (it != symbols_.end()) {
+    return &it->second;
+  }
+  return nullptr;
+}
+
+std::vector<Symbol> DataManager::getSymbolsByQuoteAsset(const std::string& quoteAsset) const {
+  std::lock_guard<std::mutex> lock(symbolMutex_);
+  std::vector<Symbol> result;
+  
+  auto it = symbolsByQuoteAsset_.find(quoteAsset);
+  if (it != symbolsByQuoteAsset_.end()) {
+    for (const auto& symName : it->second) {
+      auto symIt = symbols_.find(symName);
+      if (symIt != symbols_.end()) {
+        result.push_back(symIt->second);
+      }
+    }
+  }
+  
+  // Sort by quote volume descending
+  std::sort(result.begin(), result.end(), [](const Symbol& a, const Symbol& b) {
+    return a.quoteVolume24h > b.quoteVolume24h;
+  });
+  return result;
+}
+
+std::vector<Symbol> DataManager::getSymbolsByBaseAsset(const std::string& baseAsset) const {
+  std::lock_guard<std::mutex> lock(symbolMutex_);
+  std::vector<Symbol> result;
+  
+  auto it = symbolsByBaseAsset_.find(baseAsset);
+  if (it != symbolsByBaseAsset_.end()) {
+    for (const auto& symName : it->second) {
+      auto symIt = symbols_.find(symName);
+      if (symIt != symbols_.end()) {
+        result.push_back(symIt->second);
+      }
+    }
+  }
+  
+  // Sort by quote volume descending
+  std::sort(result.begin(), result.end(), [](const Symbol& a, const Symbol& b) {
+    return a.quoteVolume24h > b.quoteVolume24h;
+  });
+  return result;
+}
+
+void DataManager::updateSymbolPrice(const std::string& symbolName, double price, double priceChange,
+                                   double priceChangePercent, double high24h, double low24h,
+                                   double volume24h, double quoteVolume24h) {
+  {
+    std::lock_guard<std::mutex> lock(symbolMutex_);
+    auto it = symbols_.find(symbolName);
+    if (it != symbols_.end()) {
+      it->second.lastPrice = price;
+      it->second.priceChange = priceChange;
+      it->second.priceChangePercent = priceChangePercent;
+      it->second.high24h = high24h;
+      it->second.low24h = low24h;
+      it->second.volume24h = volume24h;
+      it->second.quoteVolume24h = quoteVolume24h;
+      it->second.lastUpdateTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+      ).count();
+    }
+  }
+  
+  // Update in database
+  if (database_) {
+    database_->updateSymbolPrice(symbolName, price, priceChange, priceChangePercent, 
+                                 high24h, low24h, volume24h, quoteVolume24h);
+  }
+  
+  if (onDataUpdate_) {
+    onDataUpdate_();
+  }
+}
+
+std::vector<std::string> DataManager::getQuoteAssets() const {
+  std::lock_guard<std::mutex> lock(symbolMutex_);
+  std::vector<std::string> result;
+  for (const auto& pair : symbolsByQuoteAsset_) {
+    result.push_back(pair.first);
+  }
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
+std::vector<std::string> DataManager::getBaseAssets() const {
+  std::lock_guard<std::mutex> lock(symbolMutex_);
+  std::vector<std::string> result;
+  for (const auto& pair : symbolsByBaseAsset_) {
+    result.push_back(pair.first);
+  }
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
 } // namespace core
 } // namespace glora

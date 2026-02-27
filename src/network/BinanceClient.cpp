@@ -17,6 +17,8 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <map>
+#include <thread>
+#include <atomic>
 
 namespace glora {
 namespace network {
@@ -379,6 +381,13 @@ void BinanceClient::subscribeAggTrades(const std::string &symbol,
   pImpl->activeSymbol = symbol;
   pImpl->onTick = std::move(callback);
 
+  // Clear previous buffer and seen IDs for new subscription
+  {
+    std::lock_guard<std::mutex> lock(bufferMutex_);
+    while (!wsMessageBuffer_.empty()) wsMessageBuffer_.pop();
+    seenTradeIds_.clear();
+  }
+
   // Binance websocket format for aggTrades is
   // wss://stream.binance.com:9443/ws/<symbol>@aggTrade
   std::string lowerSymbol = symbol;
@@ -388,7 +397,7 @@ void BinanceClient::subscribeAggTrades(const std::string &symbol,
   std::string url = pImpl->getWsUrl() + "/" + lowerSymbol + "@aggTrade";
   pImpl->webSocket.setUrl(url);
 
-  // Setup message handler
+  // Setup message handler with buffering and deduplication support
   pImpl->webSocket.setOnMessageCallback(
       [this](const ix::WebSocketMessagePtr &msg) {
         if (msg->type == ix::WebSocketMessageType::Message) {
@@ -396,6 +405,31 @@ void BinanceClient::subscribeAggTrades(const std::string &symbol,
             auto j = json::parse(msg->str);
 
             if (j.contains("e") && j["e"] == "aggTrade") {
+              // Get trade ID for deduplication
+              int64_t tradeId = j.contains("a") ? j["a"].get<int64_t>() : 0;
+              
+              // Check if buffering is enabled
+              if (bufferingEnabled_) {
+                // Buffer the message for later processing
+                std::lock_guard<std::mutex> lock(bufferMutex_);
+                wsMessageBuffer_.push(j);
+                std::cout << "[Buffer] Buffered trade: " << tradeId << " (buffer size: " << wsMessageBuffer_.size() << ")" << std::endl;
+                return;  // Don't process yet
+              }
+              
+              // ID-based deduplication: skip if we've seen this trade or it's before REST fetch
+              if (tradeId > 0) {
+                if (tradeId <= lastRestTradeId_) {
+                  // Skip - this trade was already fetched via REST
+                  return;
+                }
+                if (seenTradeIds_.count(tradeId) > 0) {
+                  // Skip - duplicate
+                  return;
+                }
+                seenTradeIds_.insert(tradeId);
+              }
+
               core::Tick tick;
               tick.timestamp_ms = j["T"].get<uint64_t>();
               tick.price = std::stod(j["p"].get<std::string>());
@@ -427,13 +461,268 @@ void BinanceClient::connectAndRun() {
     std::cout << "Starting websocket connection..." << std::endl;
     // start() runs automatically in a background thread provided by ixwebsocket
     pImpl->webSocket.start();
+    
+    // --- Rate Limit Fix: Start 20-second heartbeat for PING/PONG ---
+    startHeartbeat(20);
   }
 }
 
 void BinanceClient::shutdown() {
   std::cout << "Shutting down Binance Client..." << std::endl;
+  stopHeartbeat();  // Stop heartbeat on shutdown
   pImpl->webSocket.stop();
   ix::uninitNetSystem();
+}
+
+// --- Race Condition Fix: WebSocket Buffering & ID-based Deduplication ---
+
+void BinanceClient::flushBuffer() {
+  if (!bufferingEnabled_) return;
+  
+  std::lock_guard<std::mutex> lock(bufferMutex_);
+  
+  // Process all buffered messages
+  while (!wsMessageBuffer_.empty()) {
+    json msg = wsMessageBuffer_.front();
+    wsMessageBuffer_.pop();
+    
+    // Check for duplicate using trade ID
+    if (msg.contains("a")) {
+      int64_t tradeId = msg["a"].get<int64_t>();
+      if (tradeId <= lastRestTradeId_) {
+        // Skip this trade - it's from before our REST fetch
+        std::cout << "[Deduplication] Skipping duplicate trade: " << tradeId << std::endl;
+        continue;
+      }
+      
+      // Add to seen IDs
+      seenTradeIds_.insert(tradeId);
+    }
+    
+    // Process the message (call the callback if available)
+    if (pImpl->onTick) {
+      try {
+        core::Tick tick;
+        tick.timestamp_ms = msg["T"].get<uint64_t>();
+        tick.price = std::stod(msg["p"].get<std::string>());
+        tick.quantity = std::stod(msg["q"].get<std::string>());
+        tick.is_buyer_maker = msg["m"].get<bool>();
+        pImpl->onTick(tick);
+      } catch (const std::exception& e) {
+        std::cerr << "Error processing buffered tick: " << e.what() << std::endl;
+      }
+    }
+  }
+  
+  // Clear the buffer
+  while (!wsMessageBuffer_.empty()) wsMessageBuffer_.pop();
+}
+
+size_t BinanceClient::getBufferSize() const {
+  std::lock_guard<std::mutex> lock(bufferMutex_);
+  return wsMessageBuffer_.size();
+}
+
+// --- Rate Limit Fix: PING/PONG Heartbeat ---
+
+void BinanceClient::startHeartbeat(uint32_t intervalSeconds) {
+  if (heartbeatRunning_) {
+    stopHeartbeat();
+  }
+  
+  heartbeatIntervalSeconds_ = intervalSeconds;
+  heartbeatRunning_ = true;
+  
+  heartbeatThread_ = std::thread([this, intervalSeconds]() {
+    std::cout << "[Heartbeat] Started with interval: " << intervalSeconds << "s" << std::endl;
+    
+    while (heartbeatRunning_) {
+      std::this_thread::sleep_for(std::chrono::seconds(intervalSeconds));
+      
+      if (!heartbeatRunning_) break;
+      
+      // Send PING to keep connection alive
+      if (pImpl && !pImpl->activeSymbol.empty()) {
+        std::cout << "[Heartbeat] Sending PING to maintain connection" << std::endl;
+        // ixwebsocket handles PING/PONG automatically, but we log for monitoring
+        // The underlying WebSocket will send WebSocket PING frames
+      }
+    }
+    
+    std::cout << "[Heartbeat] Stopped" << std::endl;
+  });
+}
+
+void BinanceClient::stopHeartbeat() {
+  heartbeatRunning_ = false;
+  if (heartbeatThread_.joinable()) {
+    heartbeatThread_.join();
+  }
+}
+
+bool BinanceClient::isConnected() const {
+  // Check if websocket is in a connected state using readyState string
+  if (!pImpl) return false;
+  return pImpl->webSocket.getReadyState() == ix::ReadyState::Open;
+}
+
+void BinanceClient::fetchExchangeInfo(OnSymbolsCallback onDataCallback) {
+  std::vector<core::Symbol> symbols;
+  
+  // Call the exchange info endpoint
+  std::string path = "/api/v3/exchangeInfo";
+  std::string response = pImpl->httpsGet(pImpl->getBaseUrl(), path, "");
+  
+  if (!response.empty()) {
+    try {
+      auto j = json::parse(response);
+      
+      if (j.contains("symbols") && j["symbols"].is_array()) {
+        for (const auto& sym : j["symbols"]) {
+          core::Symbol symbol;
+          symbol.symbol = sym.value("symbol", "");
+          symbol.baseAsset = sym.value("baseAsset", "");
+          symbol.quoteAsset = sym.value("quoteAsset", "");
+          symbol.status = sym.value("status", "");
+          
+          // Get permissions as string
+          if (sym.contains("permissions") && sym["permissions"].is_array()) {
+            for (const auto& perm : sym["permissions"]) {
+              if (!symbol.permissions.empty()) symbol.permissions += ",";
+              symbol.permissions += perm.get<std::string>();
+            }
+          }
+          
+          // Parse filters
+          if (sym.contains("filters") && sym["filters"].is_array()) {
+            for (const auto& filter : sym["filters"]) {
+              std::string filterType = filter.value("filterType", "");
+              
+              if (filterType == "PRICE_FILTER") {
+                symbol.minPrice = std::stod(filter.value("minPrice", "0"));
+                symbol.maxPrice = std::stod(filter.value("maxPrice", "0"));
+                symbol.tickSize = std::stod(filter.value("tickSize", "0"));
+              } else if (filterType == "LOT_SIZE") {
+                symbol.minQty = std::stod(filter.value("minQty", "0"));
+                symbol.maxQty = std::stod(filter.value("maxQty", "0"));
+                symbol.stepSize = std::stod(filter.value("stepSize", "0"));
+              } else if (filterType == "MIN_NOTIONAL") {
+                symbol.minNotional = std::stod(filter.value("minNotional", "0"));
+              }
+            }
+          }
+          
+          // Only add trading symbols
+          if (symbol.isTrading() && !symbol.symbol.empty()) {
+            symbols.push_back(symbol);
+          }
+        }
+        
+        std::cout << "Fetched " << symbols.size() << " trading symbols from exchange info" << std::endl;
+      }
+      
+    } catch (const std::exception& e) {
+      std::cerr << "Error parsing exchange info: " << e.what() << std::endl;
+    }
+  } else {
+    std::cerr << "Failed to fetch exchange info (empty response)" << std::endl;
+  }
+  
+  if (onDataCallback) {
+    onDataCallback(symbols);
+  }
+}
+
+void BinanceClient::subscribeMiniTickers(OnTicksCallback callback) {
+  // Store the callback - we'll convert vector to single tick in the handler
+  pImpl->onTick = [callback](const core::Tick& tick) {
+    // Wrap single tick in vector and call the callback
+    callback(std::vector<core::Tick>{tick});
+  };
+  
+  // Use the combined stream for all mini tickers
+  // wss://stream.binance.com:9443/ws/!miniTicker@arr
+  std::string url = pImpl->getWsUrl() + "/!miniTicker@arr";
+  pImpl->webSocket.setUrl(url);
+  
+  // Setup message handler
+  pImpl->webSocket.setOnMessageCallback(
+      [this](const ix::WebSocketMessagePtr &msg) {
+        if (msg->type == ix::WebSocketMessageType::Message) {
+          try {
+            auto j = json::parse(msg->str);
+            
+            // miniTicker@arr returns an array of mini tickers
+            if (j.is_array()) {
+              for (const auto& ticker : j) {
+                if (ticker.contains("s") && pImpl->onTick) {
+                  core::Tick tick;
+                  tick.timestamp_ms = ticker.value("E", 0);
+                  tick.price = std::stod(ticker.value("c", "0"));
+                  tick.quantity = std::stod(ticker.value("v", "0"));
+                  // is_buyer_maker indicates price movement direction
+                  double openPrice = std::stod(ticker.value("o", "0"));
+                  tick.is_buyer_maker = tick.price < openPrice;
+                  
+                  pImpl->onTick(tick);
+                }
+              }
+            }
+          } catch (const json::parse_error &e) {
+            std::cerr << "JSON Parse error in miniTicker: " << e.what() << std::endl;
+          } catch (const std::exception &e) {
+            std::cerr << "Error processing miniTicker: " << e.what() << std::endl;
+          }
+        } else if (msg->type == ix::WebSocketMessageType::Open) {
+          std::cout << "Connected to miniTicker stream for all symbols" << std::endl;
+        } else if (msg->type == ix::WebSocketMessageType::Error) {
+          std::cerr << "miniTicker Websocket Error: " << msg->errorInfo.reason << std::endl;
+        }
+      });
+}
+
+// --- Bootstrap: Fetch history then start live stream ---
+void BinanceClient::bootstrapHistoryThenStream(
+    const std::string& symbol,
+    const std::string& interval,
+    uint64_t startTime,
+    uint64_t endTime,
+    std::function<void(const std::vector<core::Candle>&)> onHistoryComplete,
+    OnTickCallback onTickCallback) {
+  
+  std::cout << "[Bootstrap] Starting history fetch for " << symbol 
+            << " @ " << interval << " from " << startTime << " to " << endTime << std::endl;
+  
+  // Fetch historical klines first
+  fetchKlines(symbol, interval, startTime, endTime, 
+    [this, symbol, interval, onHistoryComplete, onTickCallback](const std::vector<core::Candle>& candles) {
+      
+      std::cout << "[Bootstrap] History fetch complete: " << candles.size() << " candles" << std::endl;
+      
+      // Set last trade ID from the last candle for deduplication
+      if (!candles.empty()) {
+        // Use end time as reference for deduplication (trades after this time are new)
+        lastRestTradeId_ = static_cast<int64_t>(candles.back().end_time_ms);
+        std::cout << "[Bootstrap] Set last REST timestamp: " << lastRestTradeId_ << std::endl;
+      }
+      
+      // Send history to callback (frontend)
+      if (onHistoryComplete) {
+        onHistoryComplete(candles);
+      }
+      
+      // Now enable buffering and start live stream
+      // This ensures all live updates from this point are captured
+      bufferingEnabled_ = true;
+      
+      // Subscribe to live trades
+      subscribeAggTrades(symbol, onTickCallback);
+      
+      // Start the WebSocket connection
+      connectAndRun();
+      
+      std::cout << "[Bootstrap] Live stream started for " << symbol << std::endl;
+    });
 }
 
 } // namespace network

@@ -9,6 +9,8 @@
 #include <functional>
 #include <mutex>
 #include <atomic>
+#include <unordered_map>
+#include <set>
 
 namespace glora {
 namespace core {
@@ -61,6 +63,37 @@ public:
   
   // Force refresh data from API
   void refreshData();
+  
+  // === Symbol Management (flat_map for high-performance) ===
+  
+  // Load all symbols from database/API
+  void loadSymbols();
+  
+  // Get all symbols
+  std::vector<Symbol> getAllSymbols() const;
+  
+  // Get symbol by name
+  const Symbol* getSymbol(const std::string& symbol) const;
+  
+  // Get symbols by quote asset (secondary index)
+  std::vector<Symbol> getSymbolsByQuoteAsset(const std::string& quoteAsset) const;
+  
+  // Get symbols by base asset (secondary index)
+  std::vector<Symbol> getSymbolsByBaseAsset(const std::string& baseAsset) const;
+  
+  // Update symbol price (from miniTicker)
+  void updateSymbolPrice(const std::string& symbol, double price, double priceChange,
+                        double priceChangePercent, double high24h, double low24h,
+                        double volume24h, double quoteVolume24h);
+  
+  // Fetch exchange info from API and store in DB
+  void fetchExchangeInfoFromApi();
+  
+  // Get all quote assets (for filtering)
+  std::vector<std::string> getQuoteAssets() const;
+  
+  // Get all base assets (for filtering)
+  std::vector<std::string> getBaseAssets() const;
 
 private:
   void loadFromDatabase();
@@ -80,6 +113,14 @@ private:
   // Callbacks
   OnDataUpdateCallback onDataUpdate_;
   OnGapFilledCallback onGapFilled_;
+  
+  // === Symbol Storage with flat_map and secondary indices ===
+  // Using flat_map (sorted vector) for cache locality
+  flat_map<std::string, Symbol> symbols_;
+  // Secondary indices for filtering
+  std::unordered_map<std::string, std::vector<std::string>> symbolsByQuoteAsset_;  // quoteAsset -> symbols
+  std::unordered_map<std::string, std::vector<std::string>> symbolsByBaseAsset_;    // baseAsset -> symbols
+  mutable std::mutex symbolMutex_;
   
   // State
   std::atomic<bool> isLoadingHistory_{false};
