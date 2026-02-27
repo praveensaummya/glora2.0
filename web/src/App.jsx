@@ -846,7 +846,7 @@ function App() {
             gap: '6px'
           }}
         >
-          🔍 Search
+          <i class="fas fa-search"></i> Search
         </button>
       </header>
 
@@ -970,7 +970,14 @@ function App() {
         {/* Sidebar */}
         <aside style={{ width: '60px', background: '#1a1d29', 'border-right': '1px solid #2a2e39', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', padding: '8px 0', gap: '8px' }}>
           <button 
-            onClick={() => { setShowOrderBook(!showOrderBook()); setTimeout(() => chart && chartContainer && chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight }), 50); }} 
+            onClick={() => { 
+              setShowOrderBook(!showOrderBook()); 
+              requestAnimationFrame(() => {
+                if (chart && chartContainer) {
+                  chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+                }
+              });
+            }} 
             style={{ 
               width: '40px', 
               height: '40px', 
@@ -982,22 +989,7 @@ function App() {
               'font-size': '16px'
             }}
           >
-            📊
-          </button>
-          <button 
-            onClick={() => { setShowTradeHistory(!showTradeHistory()); setTimeout(() => chart && chartContainer && chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight }), 50); }} 
-            style={{ 
-              width: '40px', 
-              height: '40px', 
-              border: 'none', 
-              background: showTradeHistory() ? '#2962ff' : 'transparent', 
-              color: '#d1d4dc', 
-              'border-radius': '8px', 
-              cursor: 'pointer',
-              'font-size': '16px'
-            }}
-          >
-            📜
+            <i class="fas fa-chart-line"></i>
           </button>
         </aside>
 
