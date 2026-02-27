@@ -1050,7 +1050,7 @@ function App() {
             <For each={smartDOMData().filter(d => d.price <= pocPrice()).slice(0, 10)}>{(row) => (
               <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr 1fr', padding: '3px 0', 'font-size': '11px',
                 background: row.delta > 0.5 ? 'rgba(8, 153, 129, 0.15)' : 'transparent' }}>
-                <span style={{ 'text-align': 'left', color: '#089981' }}>{row.restingBid.toFixed(4)}</span>
+                <span style={{ 'text-align': 'left', color: '#089981', 'font-weight': '500' }}>{row.restingBid.toFixed(4)}</span>
                 <span style={{ 'text-align': 'center', color: '#089981', 'font-weight': row.price === pocPrice() ? '700' : '400' }}>
                   {row.price.toFixed(2)}
                 </span>
@@ -1058,23 +1058,6 @@ function App() {
                 <span style={{ 'text-align': 'right', color: row.delta > 0 ? '#089981' : '#f23645' }}>
                   {row.delta.toFixed(2)}
                 </span>
-              </div>
-            )}</For>
-          </div>
-        </Show>
-
-        {/* Trade History */}
-        <Show when={showTradeHistory()}>
-          <div style={{ width: '280px', background: '#1a1d29', 'border-left': '1px solid #2a2e39', padding: '12px' }}>
-            <div style={{ 'font-weight': '600', 'font-size': '12px', 'margin-bottom': '12px' }}>Recent Trades</div>
-            <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', 'font-size': '11px', color: '#787b86', 'margin-bottom': '8px' }}>
-              <span>Price</span><span style={{ 'text-align': 'right' }}>Amount</span><span style={{ 'text-align': 'right' }}>Time</span>
-            </div>
-            <For each={Array.from({ length: 20 }, (_, i) => i)}>{(i) => (
-              <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr 1fr', padding: '4px 0', 'font-size': '11px', 'border-bottom': '1px solid #2a2e3920' }}>
-                <span style={{ color: Math.random() > 0.5 ? '#089981' : '#f23645' }}>{(45000 + (Math.random() - 0.5) * 100).toFixed(2)}</span>
-                <span style={{ 'text-align': 'right' }}>{(Math.random() * 0.5).toFixed(4)}</span>
-                <span style={{ 'text-align': 'right', color: '#787b86' }}>{new Date(Date.now() - i * 1000).toLocaleTimeString('en-US', { hour12: false })}</span>
               </div>
             )}</For>
           </div>
