@@ -77,6 +77,7 @@ private:
     void handleGetHistory(const json& message);
     void handleGetFootprint(const json& message);
     void handleSubscribe(const json& message);
+    void subscribeToLiveUpdates(const std::string& symbol, const std::string& interval);
     void handleSetConfig(const json& message);
     void handleGetStatus(const json& message);
     void handleGetTicks(const json& message);

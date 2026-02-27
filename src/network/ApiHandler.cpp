@@ -214,19 +214,81 @@ void ApiHandler::handleGetFootprint(const json& message) {
 
 void ApiHandler::handleSubscribe(const json& message) {
     std::string symbol = message.value("symbol", currentSymbol_);
+    std::string interval = message.value("interval", settings_.defaultInterval);
     currentSymbol_ = symbol;
     
-    std::cout << "[ApiHandler] Subscribing to " << symbol << std::endl;
+    std::cout << "[ApiHandler] Subscribing to " << symbol << " with interval " << interval << std::endl;
+    
+    // === STEP 1: Load and send historical data from database first ===
+    int days = (settings_.historyDuration == settings::HistoryDuration::CUSTOM) ? 
+               settings_.customDays : 7;
+    
+    uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    uint64_t endTime = now;
+    uint64_t startTime = now - (static_cast<uint64_t>(days) * 24 * 60 * 60 * 1000);
+    
+    // Fetch historical candles from database
+    std::vector<core::Candle> candles;
+    if (database_) {
+        candles = database_->getCandles(symbol, startTime, endTime);
+        std::cout << "[ApiHandler] Found " << candles.size() << " candles in database for " << symbol << std::endl;
+    }
+    
+    // If no data in DB, fetch from API
+    if (candles.empty() && binanceClient_) {
+        std::cout << "[ApiHandler] No data in DB, fetching from Binance..." << std::endl;
+        binanceClient_->fetchKlines(
+            symbol,
+            interval,
+            startTime,
+            endTime,
+            [this, symbol, interval, message](const std::vector<core::Candle>& fetchedCandles) {
+                std::cout << "[ApiHandler] Fetched " << fetchedCandles.size() << " candles from Binance" << std::endl;
+                
+                // Store fetched candles in database
+                if (!fetchedCandles.empty() && database_) {
+                    database_->insertCandles(symbol, fetchedCandles);
+                    std::cout << "[ApiHandler] Saved " << fetchedCandles.size() << " candles to database" << std::endl;
+                }
+                
+                // Send history to frontend
+                auto response = buildHistoryResponse(fetchedCandles);
+                response["interval"] = interval;
+                response["requestId"] = getRequestId(message);
+                broadcast(response);
+                
+                // Now subscribe to live updates
+                subscribeToLiveUpdates(symbol, interval);
+            }
+        );
+        return; // Will continue in callback
+    }
+    
+    // Send history from DB to frontend
+    auto historyResponse = buildHistoryResponse(candles);
+    historyResponse["interval"] = interval;
+    historyResponse["requestId"] = getRequestId(message);
+    broadcast(historyResponse);
+    
+    // === STEP 2: Subscribe to live updates ===
+    subscribeToLiveUpdates(symbol, interval);
+}
+
+// Helper function to subscribe to live updates
+void ApiHandler::subscribeToLiveUpdates(const std::string& symbol, const std::string& interval) {
+    std::cout << "[ApiHandler] Subscribing to live updates for " << symbol << std::endl;
     
     // Subscribe to real-time updates
     if (binanceClient_) {
         binanceClient_->subscribeAggTrades(
             symbol,
-            [this](const core::Tick& tick) {
+            [this, symbol](const core::Tick& tick) {
                 // Broadcast tick to all clients
                 json tickMsg = {
                     {"type", "tick"},
-                    {"symbol", currentSymbol_},
+                    {"symbol", symbol},
                     {"time", tick.timestamp_ms},
                     {"price", tick.price},
                     {"quantity", tick.quantity},
@@ -234,9 +296,14 @@ void ApiHandler::handleSubscribe(const json& message) {
                 };
                 broadcast(tickMsg);
                 
-                // Also pass to DataManager
+                // Also pass to DataManager (converts ticks to candles)
                 if (dataManager_) {
-                    dataManager_->addLiveTick(tick);
+                    dataManager_->addLiveTick(symbol, tick);
+                }
+                
+                // Store tick in database for persistence
+                if (database_) {
+                    database_->insertTicks(symbol, {tick});
                 }
                 
                 // Call external callback if set
@@ -252,9 +319,9 @@ void ApiHandler::handleSubscribe(const json& message) {
     json response = {
         {"type", "subscribed"},
         {"symbol", symbol},
-        {"status", "ok"}
+        {"status", "ok"},
+        {"live", true}
     };
-    response["requestId"] = getRequestId(message);
     broadcast(response);
 }
 

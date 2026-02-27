@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
       auto tickOpt = tickQueue.pop();
       if (tickOpt.has_value()) {
         mainWindow.addRawTick(tickOpt.value());
-        dataManager->addLiveTick(tickOpt.value());
+        dataManager->addLiveTick(settings.defaultSymbol, tickOpt.value());
       } else {
         break;
       }

@@ -196,6 +196,8 @@ void DataManager::processTicksToCandles(const std::vector<Tick>& ticks) {
     for (const auto& tick : candleTicks) {
       candle.add_tick(tick);
     }
+    
+    candles.push_back(candle);
   }
   
   // Save candles to database
@@ -231,7 +233,7 @@ void DataManager::processTicksToCandles(const std::vector<Tick>& ticks) {
   }
 }
 
-void DataManager::addLiveTick(const Tick& tick) {
+void DataManager::addLiveTick(const std::string& symbol, const Tick& tick) {
   // Create a single-tick candle for real-time update
   Candle candle;
   candle.add_tick(tick);
@@ -240,16 +242,24 @@ void DataManager::addLiveTick(const Tick& tick) {
   
   {
     std::lock_guard<std::mutex> lock(dataMutex_);
-    auto& candles = candlesBySymbol_[currentSymbol_];
+    auto& candles = candlesBySymbol_[symbol];
     
     // Update or add the latest candle
     if (!candles.empty() && candles.back().start_time_ms == candle.start_time_ms) {
       // Add tick to existing candle
-      for (const auto& t : {tick}) {
-        candles.back().add_tick(t);
+      candles.back().add_tick(tick);
+      
+      // Update candle in database
+      if (database_) {
+        database_->insertCandles(symbol, {candles.back()});
       }
     } else {
       candles.push_back(candle);
+      
+      // Insert new candle to database
+      if (database_) {
+        database_->insertCandles(symbol, {candle});
+      }
     }
     
     // Keep only last N candles in memory
@@ -259,14 +269,19 @@ void DataManager::addLiveTick(const Tick& tick) {
     }
   }
   
-  // Save to database (batch save periodically in production)
+  // Save tick to database (for raw tick data)
   if (database_) {
-    database_->insertTicks(currentSymbol_, {tick});
+    database_->insertTicks(symbol, {tick});
   }
   
   if (onDataUpdate_) {
     onDataUpdate_();
   }
+}
+
+void DataManager::addLiveTick(const Tick& tick) {
+  // Use current symbol for backwards compatibility
+  addLiveTick(currentSymbol_, tick);
 }
 
 const std::vector<Candle>& DataManager::getCandles(const std::string& symbol) const {

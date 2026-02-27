@@ -39,7 +39,10 @@ public:
   // Load data for a symbol (from DB + fetch missing)
   void loadSymbolData(const std::string& symbol);
   
-  // Add a live tick (from WebSocket)
+  // Add a live tick (from WebSocket) - with explicit symbol
+  void addLiveTick(const std::string& symbol, const Tick& tick);
+  
+  // Add a live tick using current symbol (backwards compatible)
   void addLiveTick(const Tick& tick);
   
   // Get all candles for a symbol
