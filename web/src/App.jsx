@@ -125,9 +125,23 @@ function App() {
       grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
       width: chartContainer.clientWidth,
       height: chartContainer.clientHeight,
-      timeScale: { timeVisible: true, secondsVisible: false },
-      rightPriceScale: { borderColor: '#2a2e39' },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2a2e39' },
     });
+
+    // Remove TradingView watermark and logo
+    const removeWatermark = () => {
+      const elements = document.querySelectorAll('.watermark, [class*="tv-"], .footer, .copyright');
+      elements.forEach(el => {
+        if (el && el.innerHTML && el.innerHTML.includes('TradingView')) {
+          el.style.display = 'none';
+        }
+      });
+    };
+    
+    // Run immediately and on interval to catch dynamically added elements
+    removeWatermark();
+    const watermarkInterval = setInterval(removeWatermark, 1000);
+    setTimeout(() => clearInterval(watermarkInterval), 5000); // Stop after 5 seconds
 
     candleSeries = chart.addCandlestickSeries({
       upColor: '#089981', downColor: '#f23645',
@@ -772,13 +786,24 @@ function App() {
     <div style={{ display: 'flex', 'flex-direction': 'column', width: '100%', height: '100%' }}>
       {/* Header */}
       <header style={{ height: '48px', background: '#1a1d29', 'border-bottom': '1px solid #2a2e39', display: 'flex', 'align-items': 'center', padding: '0 16px', gap: '16px' }}>
-        <select 
-          value={symbol()} 
-          onChange={(e) => handleSymbolChange(e.target.value)} 
-          style={{ background: '#242832', border: '1px solid #2a2e39', padding: '6px 12px', color: '#d1d4dc', 'border-radius': '4px' }}
+        <button 
+          onClick={() => setShowSymbolSearch(true)}
+          style={{ 
+            background: '#242832', 
+            border: '1px solid #2a2e39', 
+            padding: '6px 12px', 
+            color: '#787b86', 
+            'border-radius': '4px',
+            cursor: 'pointer',
+            display: 'flex',
+            'align-items': 'center',
+            gap: '8px',
+            'min-width': '120px'
+          }}
         >
-          <For each={SYMBOLS}>{(s) => <option value={s}>{s}</option>}</For>
-        </select>
+          <i class="fas fa-search" style={{ 'font-size': '12px' }}></i>
+          <span style={{ color: '#d1d4dc' }}>{symbol()}</span>
+        </button>
         
         <div style={{ display: 'flex', gap: '2px', background: '#242832', padding: '2px', 'border-radius': '4px' }}>
           <For each={TIMEFRAMES}>{(tf) => (
